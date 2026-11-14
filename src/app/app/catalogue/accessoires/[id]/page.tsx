@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { getCurrentCompany } from "@/lib/company/current";
 import { loadPriceHistory } from "@/lib/catalog/queries";
 import { accessoryToForm } from "@/lib/catalog/forms";
@@ -11,7 +12,8 @@ export const metadata: Metadata = { title: "Accessoire" };
 
 export default async function AccessoryPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase, company } = await getCurrentCompany();
+  const { supabase, company , role } = await getCurrentCompany();
+  if (role !== "admin") redirect("/app");
   const isNew = id === "nouveau";
   let initial = accessoryToForm();
   let history: Awaited<ReturnType<typeof loadPriceHistory>> = [];

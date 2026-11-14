@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getCurrentCompany } from "@/lib/company/current";
 import type { Mapping } from "@/lib/catalog/import";
 import { ImportWizard } from "./ImportWizard";
@@ -8,7 +9,8 @@ export const metadata: Metadata = { title: "Importer un tarif" };
 
 export default async function ImportPage({ searchParams }: { searchParams: Promise<{ cible?: string }> }) {
   const { cible } = await searchParams;
-  const { supabase } = await getCurrentCompany();
+  const { supabase , role } = await getCurrentCompany();
+  if (role !== "admin") redirect("/app");
   const [{ data: suppliers }, { data: brands }] = await Promise.all([
     supabase.from("suppliers").select("id, name, column_mapping").order("name"),
     supabase.from("brands").select("name").order("name"),

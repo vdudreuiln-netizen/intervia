@@ -1,10 +1,13 @@
 "use server";
 
+import { adminOnlyError } from "@/lib/billing/guard";
+
 import { revalidatePath } from "next/cache";
 import { getCurrentCompany } from "@/lib/company/current";
 import { parseCoefficientsForm } from "@/lib/sizing/coefficients";
 
 export async function saveCoefficients(form: Record<string, string>): Promise<{ ok: boolean; errors?: Record<string, string>; message: string }> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const parsed = parseCoefficientsForm(form);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, message: "Certaines valeurs sont hors limites." };

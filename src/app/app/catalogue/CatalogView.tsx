@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { createContext, useContext, useMemo, useState, useTransition } from "react";
+
+const CatalogContext = createContext({ isAdmin: true, showMargin: true });
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, LinkButton, Notice, PercentField } from "@/components/ui";
 import { formatEuros, formatPercent } from "@/lib/format";
@@ -15,17 +17,17 @@ const PAGE = 100;
 const kw = (n: number | null) => (n === null ? "" : `${n.toLocaleString("fr-FR")} kW`);
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-export function CatalogView({ tab, brands, products, accessories, accessoryCoefficient, purchaseCoefficient }: { tab: Tab; brands: BrandItem[]; products: ProductItem[]; accessories: AccessoryItem[]; accessoryCoefficient: number; purchaseCoefficient: number }) {
+export function CatalogView({ tab, brands, products, accessories, accessoryCoefficient, purchaseCoefficient, isAdmin = true, showMargin = true }: { tab: Tab; brands: BrandItem[]; products: ProductItem[]; accessories: AccessoryItem[]; accessoryCoefficient: number; purchaseCoefficient: number; isAdmin?: boolean; showMargin?: boolean }) {
   const hasExamples = brands.some((b) => b.is_example) || accessories.some((a) => a.is_example);
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "materiel", label: "Matériel", count: products.length },
     { id: "accessoires", label: "Accessoires", count: accessories.length },
-    { id: "marques", label: "Marques", count: brands.length },
+    ...(isAdmin ? [{ id: "marques" as Tab, label: "Marques", count: brands.length }] : []),
   ];
   return (
     <div className="space-y-5">
       <h1 className="text-3xl font-extrabold">Catalogue</h1>
-      <nav className="grid grid-cols-3 gap-2" aria-label="Sections du catalogue">
+      <nav className={`grid gap-2 ${isAdmin ? "grid-cols-3" : "grid-cols-2"}`} aria-label="Sections du catalogue">
         {tabs.map((t) => (
           <Link
             key={t.id}
@@ -38,10 +40,13 @@ export function CatalogView({ tab, brands, products, accessories, accessoryCoeff
           </Link>
         ))}
       </nav>
-      {hasExamples && <ExamplesNotice />}
-      {tab === "materiel" && <ProductList products={products} />}
-      {tab === "accessoires" && <AccessoryList accessories={accessories} coefficient={accessoryCoefficient} purchaseCoefficient={purchaseCoefficient} />}
-      {tab === "marques" && <BrandList brands={brands} />}
+      {hasExamples && isAdmin && <ExamplesNotice />}
+      {!isAdmin && <Notice>Catalogue en consultation : seuls les administrateurs le modifient.</Notice>}
+      <CatalogContext.Provider value={{ isAdmin, showMargin }}>
+        {tab === "materiel" && <ProductList products={products} />}
+        {tab === "accessoires" && <AccessoryList accessories={accessories} coefficient={accessoryCoefficient} purchaseCoefficient={purchaseCoefficient} />}
+        {tab === "marques" && isAdmin && <BrandList brands={brands} />}
+      </CatalogContext.Provider>
     </div>
   );
 }
@@ -69,6 +74,7 @@ function ExamplesNotice() {
 }
 
 function Actions({ addHref, addLabel, target }: { addHref: string; addLabel: string; target: "materiel" | "accessoires" }) {
+  if (!useContext(CatalogContext).isAdmin) return null;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <LinkButton href={`/app/catalogue/import?cible=${target}`}>Importer un tarif (Excel, CSV)</LinkButton>
@@ -80,6 +86,14 @@ function Actions({ addHref, addLabel, target }: { addHref: string; addLabel: str
 }
 
 function PriceRow({ purchase, sale, discount, discountNote }: { purchase: number; sale: number; discount: number; discountNote?: string }) {
+  if (!useContext(CatalogContext).showMargin) {
+    return (
+      <p className="mt-2 text-sm">
+        <span className="text-slate-600">Prix de vente HT </span>
+        <span className="text-base font-bold">{formatEuros(sale)}</span>
+      </p>
+    );
+  }
   return (
     <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
       <div>
@@ -132,7 +146,7 @@ function ProductList({ products }: { products: ProductItem[] }) {
       <ul className="space-y-3">
         {filtered.slice(0, limit).map((p) => (
           <li key={p.id}>
-            <Link href={`/app/catalogue/materiel/${p.id}`} className="block rounded-2xl border-2 border-slate-300 bg-white p-4 hover:border-brand">
+            <CardLink href={`/app/catalogue/materiel/${p.id}`}>
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-lg font-bold">
@@ -147,7 +161,7 @@ function ProductList({ products }: { products: ProductItem[] }) {
                 {p.is_example && <span className="rounded-md bg-amber-200 px-2 py-1 text-xs font-bold text-amber-900">EXEMPLE</span>}
               </div>
               <PriceRow purchase={p.prices.purchaseCents} sale={p.prices.saleCents} discount={p.prices.discount} discountNote={p.discount_rate === null ? "(marque)" : "(produit)"} />
-            </Link>
+            </CardLink>
           </li>
         ))}
       </ul>
@@ -183,7 +197,7 @@ function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { acce
               .filter((a) => a.category === g)
               .map((a) => (
                 <li key={a.id}>
-                  <Link href={`/app/catalogue/accessoires/${a.id}`} className="block rounded-2xl border-2 border-slate-300 bg-white p-4 hover:border-brand">
+                  <CardLink href={`/app/catalogue/accessoires/${a.id}`}>
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-lg font-bold">
                         {a.name}
@@ -195,7 +209,7 @@ function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { acce
                       {a.is_example && <span className="rounded-md bg-amber-200 px-2 py-1 text-xs font-bold text-amber-900">EXEMPLE</span>}
                     </div>
                     <PriceRow purchase={a.prices.purchaseCents} sale={a.prices.saleCents} discount={a.prices.discount} />
-                  </Link>
+                  </CardLink>
                 </li>
               ))}
           </ul>
@@ -278,5 +292,16 @@ function BrandEditor({ brand }: { brand?: BrandItem }) {
       </div>
       {brand && <p className="text-sm text-slate-600">{brand.product_count} produit(s)</p>}
     </Card>
+  );
+}
+
+function CardLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const cls = "block rounded-2xl border-2 border-slate-300 bg-white p-4";
+  return useContext(CatalogContext).isAdmin ? (
+    <Link href={href} className={`${cls} hover:border-brand`}>
+      {children}
+    </Link>
+  ) : (
+    <div className={cls}>{children}</div>
   );
 }

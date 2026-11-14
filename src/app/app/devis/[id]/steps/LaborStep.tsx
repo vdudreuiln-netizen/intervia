@@ -23,11 +23,12 @@ interface Props {
   wizard: WizardState;
   /** Le devis contient des retouches faites dans l'éditeur. */
   hasEdits?: boolean;
+  showMargin?: boolean;
 }
 
 const j = (n: number) => `${n.toLocaleString("fr-FR")} j`;
 
-export function LaborStep({ quoteId, company, site, coefs, rooms, equipment, accessories, wizard, hasEdits = false }: Props) {
+export function LaborStep({ quoteId, company, site, coefs, rooms, equipment, accessories, wizard, hasEdits = false, showMargin = true }: Props) {
   const router = useRouter();
   const metre = wizard.metre ?? EMPTY_METRE;
   const proposed = proposeDays(equipment, metre, coefs.laborDays);
@@ -110,7 +111,7 @@ export function LaborStep({ quoteId, company, site, coefs, rooms, equipment, acc
           {pending ? "Création du devis…" : "Créer le devis"}
         </Button>
       )}
-      <MarginBar result={result} vatRegime={company.vat_regime} />
+      <MarginBar result={result} vatRegime={company.vat_regime} showMargin={showMargin} />
     </div>
   );
 }

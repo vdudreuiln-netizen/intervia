@@ -10,3 +10,9 @@ create function storage.foldername(name text) returns text[] language sql as $$ 
 grant usage on schema public, auth, storage to authenticated, anon;
 grant execute on function auth.uid() to authenticated;
 alter table storage.objects enable row level security;
+
+-- Comme Supabase : droits par défaut accordés à la création des tables (avant les migrations)
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+grant usage on schema public to anon, authenticated, service_role;
+grant all on storage.objects to authenticated;

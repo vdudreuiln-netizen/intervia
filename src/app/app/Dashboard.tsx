@@ -37,7 +37,7 @@ function Trend({ value, points = false }: { value: number | null; points?: boole
   );
 }
 
-export function Dashboard({ quotes, followUpDays, vatRegime, company, nowIso }: { quotes: DashboardQuote[]; followUpDays: number; vatRegime: "franchise" | "assujetti"; company: { name: string; phone: string | null }; nowIso: string }) {
+export function Dashboard({ quotes, followUpDays, vatRegime, company, nowIso, showMargin = true }: { quotes: DashboardQuote[]; followUpDays: number; vatRegime: "franchise" | "assujetti"; company: { name: string; phone: string | null }; nowIso: string; showMargin?: boolean }) {
   const now = useMemo(() => new Date(nowIso), [nowIso]);
   const d = useMemo(() => dashboard(quotes, now, followUpDays), [quotes, now, followUpDays]);
   const [filter, setFilter] = useState<Filter>("tous");
@@ -62,19 +62,19 @@ export function Dashboard({ quotes, followUpDays, vatRegime, company, nowIso }: 
         + Nouveau devis
       </LinkButton>
 
-      <section className="grid gap-3 sm:grid-cols-3" aria-label="Indicateurs du mois">
+      <section className={`grid gap-3 ${showMargin ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} aria-label="Indicateurs du mois">
         <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
           <p className="text-sm font-bold uppercase text-slate-600">CA signé HT</p>
           <p className="text-3xl font-extrabold">{formatEuros(c.signedHtCents, { decimals: false })}</p>
           <p className="text-sm text-slate-600">{c.acceptedCount} devis accepté(s)</p>
           <Trend value={d.changes.signedHt} />
         </div>
-        <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+        {showMargin && <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
           <p className="text-sm font-bold uppercase text-slate-600">Marge nette signée</p>
           <p className="text-3xl font-extrabold">{formatEuros(c.signedMarginCents, { decimals: false })}</p>
           <p className="text-sm text-slate-600">{c.signedHtCents > 0 ? `${formatPercent(c.signedMarginCents / c.signedHtCents)} du CA` : "—"}</p>
           <Trend value={d.changes.signedMargin} />
-        </div>
+        </div>}
         <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
           <p className="text-sm font-bold uppercase text-slate-600">Transformation</p>
           <p className="text-3xl font-extrabold">{c.conversionRate === null ? "—" : formatPercent(c.conversionRate, 0)}</p>
@@ -113,14 +113,14 @@ export function Dashboard({ quotes, followUpDays, vatRegime, company, nowIso }: 
       {list.length === 0 && <p className="text-lg text-slate-700">{quotes.length === 0 ? "Aucun devis pour l'instant." : "Aucun devis ne correspond."}</p>}
       <ul className="space-y-3">
         {list.map((x) => (
-          <QuoteCard key={x.id} quote={x} late={needsFollowUp(x, followUpDays, now)} vatRegime={vatRegime} company={company} />
+          <QuoteCard key={x.id} quote={x} late={needsFollowUp(x, followUpDays, now)} vatRegime={vatRegime} company={company} showMargin={showMargin} />
         ))}
       </ul>
     </div>
   );
 }
 
-function QuoteCard({ quote: x, late, vatRegime, company }: { quote: DashboardQuote; late: boolean; vatRegime: "franchise" | "assujetti"; company: { name: string; phone: string | null } }) {
+function QuoteCard({ quote: x, late, vatRegime, company, showMargin }: { quote: DashboardQuote; late: boolean; vatRegime: "franchise" | "assujetti"; company: { name: string; phone: string | null }; showMargin: boolean }) {
   const router = useRouter();
   const [dup, setDup] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -163,7 +163,8 @@ function QuoteCard({ quote: x, late, vatRegime, company }: { quote: DashboardQuo
         <p className="text-base text-slate-700">
           {done ? (
             <>
-              {amount} · marge {formatEuros(x.netMarginCents, { decimals: false })}
+              {amount}
+              {showMargin && ` · marge ${formatEuros(x.netMarginCents, { decimals: false })}`}
             </>
           ) : (
             "En cours de chiffrage"

@@ -1,7 +1,4 @@
 \set ON_ERROR_STOP 1
--- privilèges par défaut de Supabase
-grant all on all tables in schema public to authenticated;
-grant all on storage.objects to authenticated;
 insert into auth.users values ('11111111-1111-1111-1111-111111111111','a@ex.fr'),('22222222-2222-2222-2222-222222222222','b@ex.fr');
 
 set role authenticated;

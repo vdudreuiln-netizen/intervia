@@ -1,5 +1,7 @@
 "use server";
 
+import { adminOnlyError } from "@/lib/billing/guard";
+
 import { revalidatePath } from "next/cache";
 import { getCurrentCompany } from "@/lib/company/current";
 import { parseAccessoryForm, parseBrandForm, parseProductForm, type AccessoryForm, type BrandForm, type ProductForm } from "@/lib/catalog/forms";
@@ -20,6 +22,7 @@ function friendly(error: { code?: string; message: string }): string {
 }
 
 export async function saveProduct(id: string | null, form: ProductForm): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const parsed = parseProductForm(form);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, message: "Certains champs sont à corriger." };
@@ -32,6 +35,7 @@ export async function saveProduct(id: string | null, form: ProductForm): Promise
 }
 
 export async function deleteProduct(id: string): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) return { ok: false, message: friendly(error) };
@@ -40,6 +44,7 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
 }
 
 export async function saveAccessory(id: string | null, form: AccessoryForm): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const parsed = parseAccessoryForm(form);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, message: "Certains champs sont à corriger." };
@@ -52,6 +57,7 @@ export async function saveAccessory(id: string | null, form: AccessoryForm): Pro
 }
 
 export async function deleteAccessory(id: string): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   const { error } = await supabase.from("accessories").delete().eq("id", id);
   if (error) return { ok: false, message: friendly(error) };
@@ -60,6 +66,7 @@ export async function deleteAccessory(id: string): Promise<ActionResult> {
 }
 
 export async function saveBrand(id: string | null, form: BrandForm): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const parsed = parseBrandForm(form);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, message: "Certains champs sont à corriger." };
@@ -73,6 +80,7 @@ export async function saveBrand(id: string | null, form: BrandForm): Promise<Act
 
 /** Supprime une marque ET ses produits (confirmé côté écran). */
 export async function deleteBrand(id: string): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   const { error } = await supabase.from("brands").delete().eq("id", id);
   if (error) return { ok: false, message: friendly(error) };
@@ -82,6 +90,7 @@ export async function deleteBrand(id: string): Promise<ActionResult> {
 
 /** Retire le catalogue d'exemple (marques fictives, leurs produits, accessoires exemple). */
 export async function deleteExamples(): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   const a = await supabase.from("brands").delete().eq("is_example", true);
   const b = await supabase.from("accessories").delete().eq("is_example", true);

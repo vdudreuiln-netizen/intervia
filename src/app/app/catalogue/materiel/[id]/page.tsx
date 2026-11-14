@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { getCurrentCompany } from "@/lib/company/current";
 import { loadBrands, loadPriceHistory } from "@/lib/catalog/queries";
 import { productToForm } from "@/lib/catalog/forms";
@@ -11,7 +12,8 @@ export const metadata: Metadata = { title: "Produit" };
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase } = await getCurrentCompany();
+  const { supabase , role } = await getCurrentCompany();
+  if (role !== "admin") redirect("/app");
   const brands = await loadBrands(supabase);
   const isNew = id === "nouveau";
   let initial = productToForm();

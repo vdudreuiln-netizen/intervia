@@ -1,5 +1,7 @@
 "use server";
 
+import { adminOnlyError } from "@/lib/billing/guard";
+
 import { revalidatePath } from "next/cache";
 import { getCurrentCompany } from "@/lib/company/current";
 import { ALL_FIELDS, parseCompanyForm, type CompanyField, type CompanyForm, type FieldErrors } from "@/lib/company/settings";
@@ -15,6 +17,7 @@ export interface SaveResult {
  * `finish` (fin de l'onboarding) revalide TOUT et marque l'onboarding terminé.
  */
 export async function saveCompany(fields: CompanyField[], form: Partial<CompanyForm>, finish = false): Promise<SaveResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
 
   // Liste blanche : on ignore tout champ inconnu envoyé par le navigateur.

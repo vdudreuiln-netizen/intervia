@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Devis" };
 /** Le devis après l'assistant : retouches, remise, arrondi, panneau « Ma marge ». */
 export default async function QuotePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase, company } = await getCurrentCompany();
+  const { supabase, company, canSeeMargins } = await getCurrentCompany();
   const q = await loadQuote(supabase, id);
   if (!q) notFound();
   const rows = await loadQuoteLines(supabase, id);
@@ -50,6 +50,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
           }}
           companyDepositRate={company.deposit_rate}
           priceNotices={q.wizard.priceNotices}
+          showMargin={canSeeMargins}
         />
       )}
     </div>

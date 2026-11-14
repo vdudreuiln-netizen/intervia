@@ -24,12 +24,13 @@ interface Props {
   products: CatProduct[];
   accessories: CatAccessory[];
   wizard: WizardState;
+  showMargin?: boolean;
 }
 
 const kw = (n: number | null) => (n ? `${n.toLocaleString("fr-FR")} kW` : "");
 const sameEquipment = (a: Equipment | null, b: Equipment) => !!a && JSON.stringify(toSelection(a)) === JSON.stringify(toSelection(b));
 
-export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, accessories, wizard }: Props) {
+export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, accessories, wizard, showMargin = true }: Props) {
   const router = useRouter();
   const ctx = useMemo(() => calcContext(company, site, coefs, wizard), [company, site, coefs, wizard]);
   const input = useMemo(() => proposalInput(ctx, company, coefs, rooms, products, accessories), [ctx, company, coefs, rooms, products, accessories]);
@@ -54,7 +55,7 @@ export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, 
             <>
               <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-3 sm:px-0">
                 {p.options.map((o) => (
-                  <OptionCard key={o.equipment.brandId} option={o} selected={sameEquipment(selected, o.equipment)} vatRegime={company.vat_regime} roomName={roomName} onChoose={() => setSelected(structuredClone(o.equipment))} />
+                  <OptionCard key={o.equipment.brandId} option={o} showMargin={showMargin} selected={sameEquipment(selected, o.equipment)} vatRegime={company.vat_regime} roomName={roomName} onChoose={() => setSelected(structuredClone(o.equipment))} />
                 ))}
               </div>
               {p.premiumNote && <p className="mt-2 text-sm text-slate-600">{p.premiumNote}</p>}
@@ -69,7 +70,7 @@ export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, 
               {showExcluded[p.kind] && (
                 <div className="-mx-4 mt-3 flex snap-x gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-3 sm:px-0">
                   {p.excluded.map((o) => (
-                    <OptionCard key={o.equipment.brandId} option={o} selected={sameEquipment(selected, o.equipment)} vatRegime={company.vat_regime} roomName={roomName} onChoose={() => setSelected(structuredClone(o.equipment))} />
+                    <OptionCard key={o.equipment.brandId} option={o} showMargin={showMargin} selected={sameEquipment(selected, o.equipment)} vatRegime={company.vat_regime} roomName={roomName} onChoose={() => setSelected(structuredClone(o.equipment))} />
                   ))}
                 </div>
               )}
@@ -101,12 +102,12 @@ export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, 
       >
         {pending ? "Enregistrement…" : selected ? "Suivant : le métré" : "Choisissez une solution"}
       </Button>
-      <MarginBar result={priced?.result ?? null} vatRegime={company.vat_regime} />
+      <MarginBar result={priced?.result ?? null} vatRegime={company.vat_regime} showMargin={showMargin} />
     </div>
   );
 }
 
-function OptionCard({ option: o, selected, vatRegime, roomName, onChoose }: { option: PricedOption; selected: boolean; vatRegime: "franchise" | "assujetti"; roomName: Map<string, string>; onChoose: () => void }) {
+function OptionCard({ option: o, selected, vatRegime, roomName, onChoose, showMargin }: { option: PricedOption; selected: boolean; vatRegime: "franchise" | "assujetti"; roomName: Map<string, string>; onChoose: () => void; showMargin: boolean }) {
   const alert = o.result.alerts.length > 0;
   const twoUnits = o.warnings.find((w) => w.startsWith("2 "));
   return (
@@ -143,6 +144,7 @@ function OptionCard({ option: o, selected, vatRegime, roomName, onChoose }: { op
           <dt className="text-slate-600">{vatRegime === "franchise" ? "Prix client HT" : "Prix client TTC"}</dt>
           <dd className="text-2xl font-extrabold">{formatEuros(o.result.totalTtcCents, { decimals: false })}</dd>
         </div>
+        {showMargin && (<>
         <div>
           <dt className="text-slate-600">Ma marge nette</dt>
           <dd className="text-lg font-bold">{formatEuros(o.result.margin.netMarginCents, { decimals: false })}</dd>
@@ -151,6 +153,7 @@ function OptionCard({ option: o, selected, vatRegime, roomName, onChoose }: { op
           <dt className="text-slate-600">Par jour ({o.laborDays.toLocaleString("fr-FR")} j)</dt>
           <dd className={`text-lg font-bold ${alert ? "text-danger" : "text-ok"}`}>{o.result.margin.marginPerDayCents === null ? "—" : formatEuros(o.result.margin.marginPerDayCents, { decimals: false })}</dd>
         </div>
+        </>)}
       </dl>
       {alert && <p className="mt-2 rounded-lg bg-danger-light px-3 py-2 text-sm font-bold text-danger">⚠ {o.result.alerts[0]!.message}</p>}
       <button

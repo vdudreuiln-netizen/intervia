@@ -26,6 +26,7 @@ interface Props {
   documentOptions: DocumentOptions;
   companyDepositRate: number;
   priceNotices?: WizardState["priceNotices"];
+  showMargin: boolean;
 }
 
 const VAT_OPTIONS = [
@@ -34,7 +35,7 @@ const VAT_OPTIONS = [
   { value: "0.2", label: "TVA 20 %" },
 ];
 
-export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate, priceNotices }: Props) {
+export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate, priceNotices, showMargin }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
@@ -80,13 +81,13 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
           ⚠ {a.message}
         </Notice>
       ))}
-      <MarginPanel result={result} laborDays={laborDays} maxDiscount={max} />
+      {showMargin && <MarginPanel result={result} laborDays={laborDays} maxDiscount={max} />}
       {flash && <Notice tone={flash.ok ? "ok" : "danger"}>{flash.text}</Notice>}
 
       <Card title="Lignes du devis">
         <ul className="divide-y-2 divide-slate-200">
           {result.lines.map((l) => (
-            <LineItem key={l.id} line={l} row={rows.find((r) => r.id === l.id)!} assujetti={assujetti} pending={pending} run={run} quoteId={quoteId} />
+            <LineItem key={l.id} line={l} row={rows.find((r) => r.id === l.id)!} assujetti={assujetti} pending={pending} run={run} quoteId={quoteId} showMargin={showMargin} />
           ))}
         </ul>
         <Totals result={result} />
@@ -95,7 +96,7 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
       <Rounding pending={pending} onRound={() => run(() => roundQuote(quoteId))} />
       <DiscountForm discount={discount} max={max} grossHt={result.grossHtCents} pending={pending} onApply={(d) => run(() => setDiscount(quoteId, d), d ? "Remise appliquée ✔" : "Remise retirée ✔")} />
       <FreeLineFormCard assujetti={assujetti} pending={pending} onAdd={(f) => addFreeLine(quoteId, f)} onDone={() => router.refresh()} />
-      <CoefficientsForm coefficients={coefficients} pending={pending} onApply={(m, a) => run(() => setQuoteCoefficients(quoteId, m, a), "Prix recalculés avec les coefficients du devis ✔ (vos retouches sont conservées)")} />
+      {showMargin && <CoefficientsForm coefficients={coefficients} pending={pending} onApply={(m, a) => run(() => setQuoteCoefficients(quoteId, m, a), "Prix recalculés avec les coefficients du devis ✔ (vos retouches sont conservées)")} />}
 
       <DocumentPanel quoteId={quoteId} options={documentOptions} companyDepositRate={companyDepositRate} />
       <SharePanel quoteId={quoteId} number={number} status={status} warnings={warnings} />
@@ -103,14 +104,14 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
       <LinkButton href={`/app/devis/${quoteId}?etape=4`} variant="secondary" full>
         Relancer l&apos;assistant (solutions, métré…)
       </LinkButton>
-      <MarginBar result={result} vatRegime={settings.vatRegime} />
+      <MarginBar result={result} vatRegime={settings.vatRegime} showMargin={showMargin} />
     </div>
   );
 }
 
 type Run = (fn: () => Promise<{ ok: boolean; message?: string }>, success?: string) => void;
 
-function LineItem({ line: l, row, assujetti, pending, run, quoteId }: { line: PricedLine; row: QuoteLineRow; assujetti: boolean; pending: boolean; run: Run; quoteId: string }) {
+function LineItem({ line: l, row, assujetti, pending, run, quoteId, showMargin }: { line: PricedLine; row: QuoteLineRow; assujetti: boolean; pending: boolean; run: Run; quoteId: string; showMargin: boolean }) {
   const [editing, setEditing] = useState(false);
   const [price, setPrice] = useState(centsToInput(l.unitSaleCents));
   const [vat, setVat] = useState(String(l.vatRate));
@@ -125,7 +126,8 @@ function LineItem({ line: l, row, assujetti, pending, run, quoteId }: { line: Pr
           </p>
           <p className="text-sm text-slate-600">
             {l.quantity.toLocaleString("fr-FR")} {l.unit} × {formatEuros(l.unitSaleCents)}
-            {assujetti && ` · TVA ${formatPercent(l.vatRate)}`} · achat {formatEuros(l.unitPurchaseCents)}
+            {assujetti && ` · TVA ${formatPercent(l.vatRate)}`}
+            {showMargin && ` · achat ${formatEuros(l.unitPurchaseCents)}`}
           </p>
           {l.belowCost && <p className="text-sm font-bold text-danger">⚠ Sous le coût de revient</p>}
         </div>

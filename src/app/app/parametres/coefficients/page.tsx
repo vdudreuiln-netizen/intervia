@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getCurrentCompany } from "@/lib/company/current";
 import { coefficientsToForm, withDefaults } from "@/lib/sizing/coefficients";
 import { CoefficientsForm } from "./CoefficientsForm";
@@ -7,7 +8,8 @@ import { CoefficientsForm } from "./CoefficientsForm";
 export const metadata: Metadata = { title: "Coefficients" };
 
 export default async function CoefficientsPage() {
-  const { supabase } = await getCurrentCompany();
+  const { supabase , role } = await getCurrentCompany();
+  if (role !== "admin") redirect("/app");
   const { data } = await supabase.from("settings_coefficients").select("sizing, labor_days").maybeSingle();
   const coefs = withDefaults(data ? { sizing: data.sizing, laborDays: data.labor_days } : null);
   return (

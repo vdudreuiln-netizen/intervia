@@ -7,6 +7,7 @@ import type { CompanyRow } from "./settings";
 export interface CurrentCompany extends CompanyRow {
   id: string;
   onboarding_done: boolean;
+  technicians_see_margins: boolean;
 }
 
 const COLUMNS =
@@ -14,7 +15,7 @@ const COLUMNS =
   "insurer_name, insurance_policy, insurance_coverage, bank_holder, iban, bic, vat_regime, vat_number, default_vat_rate, " +
   "labor_charges_rate, material_charges_rate, daily_labor_rate_cents, accessory_sale_coefficient, accessory_purchase_coefficient, target_margin_per_day_cents, quote_validity_days, payment_terms, " +
   "base_address, base_postal_code, base_city, base_citycode, base_lat, base_lng, travel_price_per_km_cents, travel_minimum_fee_cents, " +
-  "parking_per_day_cents, travel_min_daily_with_parking_cents, mediator_name, mediator_address, mediator_website, deposit_rate, follow_up_days, preferred_brand_id, commissioning_price_cents, fluid_form_price_cents, fluid_form_policy, default_electric_length_m";
+  "parking_per_day_cents, travel_min_daily_with_parking_cents, technicians_see_margins, mediator_name, mediator_address, mediator_website, deposit_rate, follow_up_days, preferred_brand_id, commissioning_price_cents, fluid_form_price_cents, fluid_form_policy, default_electric_length_m";
 
 /**
  * Utilisateur connecté + son entreprise. Crée l'entreprise au premier passage
@@ -30,9 +31,14 @@ export const getCurrentCompany = cache(async () => {
 
   let { data: company } = await supabase.from("companies").select(COLUMNS).maybeSingle<CurrentCompany>();
   if (!company) {
-    const legalName = (user.user_metadata?.legal_name as string | undefined) ?? "";
-    const { error } = await supabase.rpc("create_company_for_current_user", { p_legal_name: legalName });
-    if (error) throw new Error(`Création de l'entreprise impossible : ${error.message}`);
+    // Invité par un collègue : on rejoint son entreprise au lieu d'en créer une.
+    const invitation = user.user_metadata?.invitation_token as string | undefined;
+    const joined = invitation ? !(await supabase.rpc("accept_invitation", { p_token: invitation })).error : false;
+    if (!joined) {
+      const legalName = (user.user_metadata?.legal_name as string | undefined) ?? "";
+      const { error } = await supabase.rpc("create_company_for_current_user", { p_legal_name: legalName });
+      if (error) throw new Error(`Création de l'entreprise impossible : ${error.message}`);
+    }
     ({ data: company } = await supabase.from("companies").select(COLUMNS).single<CurrentCompany>());
   }
   if (!company) throw new Error("Entreprise introuvable");
@@ -44,5 +50,15 @@ export const getCurrentCompany = cache(async () => {
   company.accessory_purchase_coefficient = Number(company.accessory_purchase_coefficient);
   company.default_electric_length_m = Number(company.default_electric_length_m);
   company.deposit_rate = Number(company.deposit_rate);
-  return { supabase, user, company };
+  const { data: profile } = await supabase.from("profiles").select("access_role, role, full_name").eq("id", user.id).single();
+  const role = (profile?.access_role ?? "technicien") as "admin" | "technicien";
+  return {
+    supabase,
+    user,
+    company,
+    role,
+    isOwner: profile?.role === "owner",
+    /** Les techniciens ne voient les marges et prix d'achat que si l'administrateur l'autorise. */
+    canSeeMargins: role === "admin" || company.technicians_see_margins,
+  };
 });

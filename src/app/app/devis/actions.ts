@@ -1,5 +1,7 @@
 "use server";
 
+import { readOnlyError } from "@/lib/billing/guard";
+
 import { revalidatePath } from "next/cache";
 import { getCurrentCompany } from "@/lib/company/current";
 import { isSameCommune } from "@/lib/geo/adresse";
@@ -25,6 +27,7 @@ const FAIL = "Enregistrement impossible. Réessayez.";
 // ---------------------------------------------------------------------------
 
 export async function saveClientSite(quoteId: string | null, form: ClientSiteForm): Promise<{ ok: boolean; errors?: ClientSiteErrors; message?: string; id?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const parsed = parseClientSite(form);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, message: "Certains champs sont à corriger." };
@@ -74,6 +77,7 @@ export async function computeDistance(site: { lat: number; lng: number; citycode
 // ---------------------------------------------------------------------------
 
 export async function saveRooms(quoteId: string, forms: RoomForm[], gainableAccess: boolean): Promise<{ ok: boolean; errors?: Record<string, Record<string, string>>; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
@@ -110,6 +114,7 @@ export async function saveRooms(quoteId: string, forms: RoomForm[], gainableAcce
 // ---------------------------------------------------------------------------
 
 export async function saveWizard(quoteId: string, patch: WizardState): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
@@ -128,6 +133,7 @@ export async function saveWizard(quoteId: string, patch: WizardState): Promise<{
  *  - mode « recalc » : tout est recalculé, retouches et lignes libres effacées.
  */
 export async function finalizeQuote(quoteId: string, mode: "keep" | "recalc" = "keep"): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
@@ -228,6 +234,7 @@ async function lineContext(quoteId: string, lineId: string) {
 
 /** Modifier le prix de vente (et la TVA) d'une ligne. */
 export async function updateLine(quoteId: string, lineId: string, patch: { unitSaleCents: number; vatRate?: number }): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const c = await lineContext(quoteId, lineId);
   if (!c) return { ok: false, message: "Ligne introuvable." };
   if (!Number.isInteger(patch.unitSaleCents) || patch.unitSaleCents < 0 || patch.unitSaleCents > 100_000_000) return { ok: false, message: "Prix invalide." };
@@ -243,6 +250,7 @@ export async function updateLine(quoteId: string, lineId: string, patch: { unitS
 }
 
 export async function deleteLine(quoteId: string, lineId: string): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const c = await lineContext(quoteId, lineId);
   if (!c) return { ok: false, message: "Ligne introuvable." };
   const { error } = await c.supabase.from("quote_lines").delete().eq("id", lineId);
@@ -255,6 +263,7 @@ export async function deleteLine(quoteId: string, lineId: string): Promise<{ ok:
 }
 
 export async function addFreeLine(quoteId: string, form: FreeLineForm): Promise<{ ok: boolean; errors?: Partial<Record<keyof FreeLineForm, string>>; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
@@ -280,6 +289,7 @@ export async function addFreeLine(quoteId: string, form: FreeLineForm): Promise<
 }
 
 export async function setDiscount(quoteId: string, discount: QuoteDiscount | null): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   if (discount && (!(discount.value >= 0) || (discount.kind === "percent" && discount.value >= 1))) return { ok: false, message: "Remise invalide." };
   const { error } = await supabase
@@ -292,6 +302,7 @@ export async function setDiscount(quoteId: string, discount: QuoteDiscount | nul
 
 /** Bouton « Arrondir aux seuils psychologiques » : calcul fait côté serveur. */
 export async function roundQuote(quoteId: string): Promise<{ ok: boolean; message: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
@@ -322,6 +333,7 @@ export async function roundQuote(quoteId: string): Promise<{ ok: boolean; messag
 
 /** Coefficients de vente propres au devis : regénère les lignes en conservant les retouches. */
 export async function setQuoteCoefficients(quoteId: string, material: number | null, accessory: number | null): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   for (const c of [material, accessory]) if (c !== null && !(c > 0 && c <= 5)) return { ok: false, message: "Coefficient entre 0,01 et 5." };
   const s = await saveWizard(quoteId, { materialCoefficient: material, accessoryCoefficient: accessory });
   if (!s.ok) return s;
@@ -342,6 +354,7 @@ export interface DocumentOptions {
 }
 
 export async function setDocumentOptions(quoteId: string, o: DocumentOptions): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   if (o.presentation !== "particulier" && o.presentation !== "detaille") return { ok: false, message: "Présentation invalide." };
   if (o.depositRate !== null && !(o.depositRate >= 0 && o.depositRate < 1)) return { ok: false, message: "Acompte entre 0 et 99 %." };
@@ -367,6 +380,7 @@ export async function setDocumentOptions(quoteId: string, o: DocumentOptions): P
 
 /** Statut à la main : envoyé (bloqué si le devis n'est pas conforme), accepté, refusé, brouillon. */
 export async function setQuoteStatus(quoteId: string, status: "brouillon" | "envoye" | "accepte" | "refuse"): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   if (!["brouillon", "envoye", "accepte", "refuse"].includes(status)) return { ok: false, message: "Statut invalide." };
   if (status === "envoye") {
@@ -396,6 +410,7 @@ export async function setQuoteStatus(quoteId: string, status: "brouillon" | "env
  * prix sont signalés sur la copie.
  */
 export async function duplicateQuote(sourceId: string, target: { mode: "same" | "other"; clientName?: string }): Promise<{ ok: boolean; id?: string; next?: string; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase, company } = await getCurrentCompany();
   const src = await loadQuote(supabase, sourceId);
   if (!src) return { ok: false, message: "Devis introuvable." };
@@ -494,6 +509,7 @@ export async function dismissPriceNotices(quoteId: string): Promise<{ ok: boolea
 
 /** Note la date de relance (après le partage du message au client). */
 export async function recordFollowUp(quoteId: string): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   const { data: q } = await supabase.from("quotes").select("follow_up_count").eq("id", quoteId).maybeSingle();
   if (!q) return { ok: false, message: "Devis introuvable." };

@@ -17,9 +17,12 @@ export default function Home() {
         <LinkButton href="/connexion?mode=inscription" full>
           Essai gratuit 14 jours
         </LinkButton>
-        <p className="text-center text-base text-slate-600">Sans carte bancaire. Ensuite 59 € HT / mois.</p>
+        <p className="text-center text-base text-slate-600">Sans carte bancaire. Ensuite à partir de 49 €/mois, sans engagement.</p>
         <LinkButton href="/connexion" variant="secondary" full>
           J&apos;ai déjà un compte
+        </LinkButton>
+        <LinkButton href="/tarifs" variant="ghost" full>
+          Voir les tarifs
         </LinkButton>
       </div>
     </main>

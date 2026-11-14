@@ -22,11 +22,12 @@ interface Props {
   equipment: Equipment;
   accessories: CatAccessory[];
   wizard: WizardState;
+  showMargin?: boolean;
 }
 
 const UNIT: Record<string, string> = { m: "m", kg: "kg", u: "u", forfait: "forf.", jour: "j" };
 
-export function MetreStep({ quoteId, company, site, coefs, rooms, equipment, accessories, wizard }: Props) {
+export function MetreStep({ quoteId, company, site, coefs, rooms, equipment, accessories, wizard, showMargin = true }: Props) {
   const router = useRouter();
   const [metre, setMetre] = useState<Metre>(wizard.metre ?? EMPTY_METRE);
   const [text, setText] = useState<Record<string, string>>({}); // saisies en cours (virgule…)
@@ -167,7 +168,7 @@ export function MetreStep({ quoteId, company, site, coefs, rooms, equipment, acc
       >
         {pending ? "Enregistrement…" : "Suivant : la main d'œuvre"}
       </Button>
-      <MarginBar result={result} vatRegime={company.vat_regime} />
+      <MarginBar result={result} vatRegime={company.vat_regime} showMargin={showMargin} />
     </div>
   );
 }

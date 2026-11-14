@@ -1,5 +1,7 @@
 "use server";
 
+import { adminOnlyError } from "@/lib/billing/guard";
+
 import { revalidatePath } from "next/cache";
 import { getCurrentCompany } from "@/lib/company/current";
 import { fetchAll } from "@/lib/catalog/queries";
@@ -73,6 +75,7 @@ async function plan(req: ImportRequest) {
 }
 
 export async function previewImport(req: ImportRequest): Promise<PreviewResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const r = await plan(req);
   if (!r.plan) return { ok: false, problems: r.problems };
   const p = r.plan;
@@ -87,6 +90,7 @@ export async function previewImport(req: ImportRequest): Promise<PreviewResult> 
 }
 
 export async function commitImport(req: ImportRequest): Promise<{ ok: boolean; message: string }> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
   const r = await plan(req);
   if (!r.plan) return { ok: false, message: r.problems.join(". ") };
   const p = r.plan;

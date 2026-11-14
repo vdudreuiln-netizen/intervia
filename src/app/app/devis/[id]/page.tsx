@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: "Devis" };
 
 export default async function QuoteWizardPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ etape?: string }> }) {
   const [{ id }, { etape }] = await Promise.all([params, searchParams]);
-  const { supabase, company } = await getCurrentCompany();
+  const { supabase, company, canSeeMargins } = await getCurrentCompany();
   const q = await loadQuote(supabase, id);
   if (!q) notFound();
 
@@ -83,11 +83,11 @@ export default async function QuoteWizardPage({ params, searchParams }: { params
   } else {
     const catalog = await loadWizardCatalog(supabase);
     if (step === 4) {
-      body = <SolutionsStep quoteId={id} company={pricing} site={site} coefs={coefs} rooms={rooms} products={catalog.products} accessories={catalog.accessories} wizard={q.wizard} />;
+      body = <SolutionsStep quoteId={id} company={pricing} site={site} coefs={coefs} rooms={rooms} products={catalog.products} accessories={catalog.accessories} wizard={q.wizard} showMargin={canSeeMargins} />;
     } else {
       const equipment = fromSelection(q.wizard.selection!, catalog.products);
       if (!equipment) redirect(`/app/devis/${id}?etape=4`);
-      const props = { quoteId: id, company: pricing, site, coefs, rooms, equipment, accessories: catalog.accessories, wizard: q.wizard };
+      const props = { quoteId: id, company: pricing, site, coefs, rooms, equipment, accessories: catalog.accessories, wizard: q.wizard, showMargin: canSeeMargins };
       const manual = step === 6 ? (await loadQuoteLines(supabase, id)).filter((l) => l.origin === "manual").length : 0;
       body = step === 5 ? <MetreStep {...props} /> : <LaborStep {...props} hasEdits={hasEdits(q.wizard.edits, manual)} />;
     }

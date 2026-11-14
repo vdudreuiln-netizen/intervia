@@ -24,14 +24,16 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: translate(error.message) };
-  redirect("/app");
+  const invitation = safeToken(formData.get("invitation"));
+  redirect(invitation ? `/invitation/${invitation}` : "/app");
 }
 
 export async function signUp(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const legalName = String(formData.get("legal_name") ?? "").trim();
-  if (!legalName) return { error: "Indiquez le nom de votre entreprise." };
+  const invitation = safeToken(formData.get("invitation"));
+  if (!legalName && !invitation) return { error: "Indiquez le nom de votre entreprise." };
   if (!email) return { error: "Indiquez votre e-mail." };
   if (password.length < 8) return { error: "Mot de passe trop court : 8 caractères minimum." };
 
@@ -40,11 +42,20 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { legal_name: legalName }, emailRedirectTo: `${origin}/auth/callback` },
+    options: {
+      data: invitation ? { invitation_token: invitation } : { legal_name: legalName },
+      emailRedirectTo: `${origin}/auth/callback${invitation ? `?next=${encodeURIComponent(`/invitation/${invitation}`)}` : ""}`,
+    },
   });
   if (error) return { error: translate(error.message) };
-  if (data.session) redirect("/app/bienvenue");
+  if (data.session) redirect(invitation ? `/invitation/${invitation}` : "/app/bienvenue");
   return { info: `C'est presque fini : cliquez sur le lien envoyé à ${email} pour activer votre compte.` };
+}
+
+/** Jeton d'invitation : hexadécimal uniquement (évite toute redirection arbitraire). */
+function safeToken(v: FormDataEntryValue | null): string | null {
+  const s = String(v ?? "");
+  return /^[0-9a-f]{16,128}$/.test(s) ? s : null;
 }
 
 export async function signOut() {

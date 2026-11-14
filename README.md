@@ -16,7 +16,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 5 | Éditeur de devis : retouches, lignes libres, remise, panneau « Ma marge », arrondi | ✅ |
 | 6 | PDF du devis : modes particulier / détaillé, mentions légales, acompte, rétractation, partage | ✅ |
 | 7 | Tableau de bord : CA HT signé, marge, transformation, relances, duplication | ✅ |
-| 8 | Abonnement Stripe | à faire |
+| 8 | Abonnement Stripe (3 formules + offre de lancement), équipe et rôles, lecture seule | ✅ |
 
 ## Organisation
 
@@ -29,6 +29,7 @@ src/lib/company/       paramètres entreprise : validation (SIRET, IBAN, TVA…)
 src/lib/catalog/       import de tarifs (CSV, xlsx), plan d'import, formulaires du catalogue
 src/lib/geo/           géocodage et distance routière (Géoplateforme IGN), détection « même commune »
 src/lib/quote/         assistant devis : choix du matériel, options, lignes, métré (pur, testé)
+src/lib/billing/       formules, accès (essai / lecture seule), synchronisation Stripe
 src/lib/dashboard/     indicateurs du mois (heure de Paris), relances, message type
 src/lib/pdf/           modèle du devis imprimé (pur, testé) et rendu PDF (@react-pdf/renderer)
 src/app/               écrans (connexion, onboarding /app/bienvenue, /app/parametres)
@@ -57,7 +58,7 @@ Vérification de la RLS et de l'import sur un PostgreSQL local :
 
 ```bash
 createdb climdevis_test
-for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql; do
+for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql; do
   psql -d climdevis_test -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -120,5 +121,33 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
   relance ; bouton « Relancer » = message type via le partage du téléphone, date de relance notée.
 - Dupliquer : même client ou autre client (par défaut) ; prix recalculés avec le catalogue actuel, retouches
   conservées, écarts signalés (prix mis à jour, prix d'achat changé sous une retouche).
+
+## Abonnement et équipe
+
+Formules sans engagement (prix nets, éditeur en franchise de TVA) : Solo 49 €/mois ou 490 €/an (1 utilisateur),
+Équipe 89 € / 890 € (3), Entreprise 179 € / 1 790 € (10). Offre de lancement : Solo 29 €/mois à vie pour les
+50 premiers abonnés (prix Stripe dédié, compteur en base, place jamais rendue).
+
+- Essai de 14 jours sans carte (jusqu'à 10 utilisateurs). Abonnement pris pendant l'essai : premier paiement
+  à la fin de l'essai. Fin d'essai ou abonnement inactif : **lecture seule garantie en base** (RLS
+  `company_can_write()`), devis et PDF restent consultables.
+- Rôles : Administrateur (paramètres, catalogue, abonnement, marges) / Technicien (devis ; marges et prix
+  d'achat visibles seulement si l'administrateur l'autorise — masquage à l'écran).
+- Invitations par e-mail (Supabase Auth) avec lien de secours ; limite d'utilisateurs de la formule, passage
+  à la formule supérieure proposé (au prorata).
+
+### Mise en place Stripe
+
+1. Créez un produit par formule et 7 prix récurrents en EUR (Solo, Équipe, Entreprise × mensuel / annuel,
+   plus « Solo lancement » 29 €/mois). Reportez leurs identifiants dans `.env.local` (`STRIPE_PRICE_*`).
+2. Portail client (Paramètres › Billing › Customer portal) : activez la mise à jour de la carte, les
+   factures et la résiliation en fin de période.
+3. Webhook vers `https://votre-domaine/api/stripe/webhook`, événements : `checkout.session.completed`,
+   `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`.
+   Copiez le secret dans `STRIPE_WEBHOOK_SECRET`.
+4. `SUPABASE_SERVICE_ROLE_KEY` est requise (webhook et invitations) : ne l'exposez jamais au navigateur.
+
+> Franchise de TVA de l'éditeur : seuil de 37 500 € HT de CA annuel en prestations de services (2026).
+> Au-delà, activer la TVA dans Stripe (taux 20 %) et retirer la mention des factures.
 
 > Le dimensionnement W/m³ est un ordre de grandeur pour chiffrer, pas un bilan thermique réglementaire.

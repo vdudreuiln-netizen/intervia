@@ -4,8 +4,8 @@ import { fetchAll } from "@/lib/catalog/queries";
 import { Dashboard, type DashboardQuote } from "./Dashboard";
 
 export default async function AppHome() {
-  const { supabase, company } = await getCurrentCompany();
-  if (!company.onboarding_done) redirect("/app/bienvenue");
+  const { supabase, company, role, canSeeMargins } = await getCurrentCompany();
+  if (!company.onboarding_done && role === "admin") redirect("/app/bienvenue");
   type Row = Record<string, unknown> & { projects: { clients: { name: string; phone: string | null; email: string | null } } };
   const rows = await fetchAll<Row>((from, to) =>
     supabase
@@ -29,5 +29,5 @@ export default async function AppHome() {
     followUpCount: Number(q.follow_up_count ?? 0),
     client: q.projects.clients,
   }));
-  return <Dashboard quotes={quotes} followUpDays={Number(company.follow_up_days)} vatRegime={company.vat_regime} company={{ name: company.legal_name, phone: company.phone }} nowIso={new Date().toISOString()} />;
+  return <Dashboard quotes={quotes} followUpDays={Number(company.follow_up_days)} vatRegime={company.vat_regime} company={{ name: company.legal_name, phone: company.phone }} nowIso={new Date().toISOString()} showMargin={canSeeMargins} />;
 }
