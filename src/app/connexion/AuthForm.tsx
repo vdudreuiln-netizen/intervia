@@ -32,6 +32,26 @@ export function AuthForm({ initialMode, invitation, email }: { initialMode: "con
         <input name="password" type="password" autoComplete={signup ? "new-password" : "current-password"} minLength={signup ? 8 : undefined} required className={`${input} mt-1`} />
         {signup && <span className="mt-1 block text-sm font-normal text-slate-600">8 caractères minimum</span>}
       </label>
+      {signup && (
+        <label className="flex items-start gap-3 text-base">
+          <input type="checkbox" name="terms" required className="mt-1 h-6 w-6 shrink-0 accent-brand" />
+          <span>
+            J&apos;accepte les{" "}
+            <Link href="/cgv" target="_blank" className="font-bold text-brand underline">
+              conditions générales de vente et d&apos;utilisation
+            </Link>
+            , la{" "}
+            <Link href="/confidentialite" target="_blank" className="font-bold text-brand underline">
+              politique de confidentialité
+            </Link>{" "}
+            et l&apos;
+            <Link href="/dpa" target="_blank" className="font-bold text-brand underline">
+              accord de traitement des données
+            </Link>
+            .
+          </span>
+        </label>
+      )}
       {state.error && <Notice tone="danger">{state.error}</Notice>}
       {state.info && <Notice tone="ok">{state.info}</Notice>}
       <Button type="submit" full disabled={pending}>
@@ -41,6 +61,11 @@ export function AuthForm({ initialMode, invitation, email }: { initialMode: "con
       <button type="button" onClick={() => setMode(signup ? "connexion" : "inscription")} className="block w-full py-3 text-center text-lg font-bold text-brand underline underline-offset-4">
         {signup ? "J'ai déjà un compte" : "Créer un compte"}
       </button>
+      {!signup && (
+        <Link href="/mot-de-passe-oublie" className="block text-center text-base font-bold text-brand underline">
+          Mot de passe oublié ?
+        </Link>
+      )}
       <Link href="/" className="block text-center text-base text-slate-600 underline">
         Retour
       </Link>

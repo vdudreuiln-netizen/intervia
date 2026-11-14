@@ -77,6 +77,8 @@ export interface CatProduct {
   brandDiscount: number;
   productDiscount: number | null;
   brandCoefficient: number;
+  /** Données nettoyées pour un technicien sans accès aux marges : aucun coût. */
+  costHidden?: boolean;
 }
 
 export interface CatAccessory {
@@ -89,6 +91,8 @@ export interface CatAccessory {
   publicPriceCents: number | null;
   purchasePriceCents: number | null;
   discount: number;
+  /** Prix de vente déjà calculé côté serveur (technicien sans accès aux marges) : aucun coût transmis. */
+  fixedSaleCents?: number;
 }
 
 export interface RoomNeed {
@@ -154,10 +158,14 @@ export const EMPTY_EDITS: QuoteEdits = { overrides: {}, removed: [] };
 /** Écart de prix constaté lors de la copie d'un devis (catalogue actuel vs devis d'origine). */
 export interface PriceNotice {
   designation: string;
-  /** « updated » : prix de vente mis à jour ; « override_kept » : prix d'achat changé, votre prix retouché est conservé. */
+  /**
+   * « updated » : prix de vente mis à jour (montants de vente) ;
+   * « override_kept » : prix d'achat changé sous une retouche conservée. Aucun montant
+   * d'achat n'est stocké ici (l'état du devis est lisible par toute l'équipe).
+   */
   kind: "updated" | "override_kept";
-  fromCents: number;
-  toCents: number;
+  fromCents?: number;
+  toCents?: number;
   /** Prix de vente conservé (retouche). */
   keptSaleCents?: number;
 }

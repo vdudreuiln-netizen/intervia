@@ -10,19 +10,21 @@ import type { AutoRole, CatAccessory, CatProduct, WizardState } from "./types";
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
-export async function loadWizardCatalog(supabase: SupabaseClient): Promise<{ products: CatProduct[]; accessories: CatAccessory[] }> {
+/** Catalogue AVEC coûts : `db` = client normal (membre autorisé) ou client service (serveur seulement), filtré par entreprise. */
+export async function loadWizardCatalog(supabase: SupabaseClient, companyId: string): Promise<{ products: CatProduct[]; accessories: CatAccessory[] }> {
   type RawP = Record<string, unknown> & { brands: { name: string; discount_rate: number; sale_coefficient: number } };
   const [products, accessories] = await Promise.all([
     fetchAll<RawP>((from, to) =>
       supabase
         .from("products")
         .select("id, brand_id, reference, range_name, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, link_diameters, precharged_length_m, extra_charge_g_per_m, public_price_cents, discount_rate, brands(name, discount_rate, sale_coefficient)")
+        .eq("company_id", companyId)
         .eq("active", true)
         .neq("type", "accessoire")
         .range(from, to) as never,
     ),
     fetchAll<Record<string, unknown>>((from, to) =>
-      supabase.from("accessories").select("id, auto_role, category, name, diameter, unit, public_price_cents, purchase_price_cents, discount_rate").eq("active", true).order("created_at").range(from, to) as never,
+      supabase.from("accessories").select("id, auto_role, category, name, diameter, unit, public_price_cents, purchase_price_cents, discount_rate").eq("company_id", companyId).eq("active", true).order("created_at").range(from, to) as never,
     ),
   ]);
   return {
@@ -199,8 +201,9 @@ export interface QuoteLineRow extends QuoteLineInput {
   position: number;
 }
 
-export async function loadQuoteLines(supabase: SupabaseClient, quoteId: string): Promise<QuoteLineRow[]> {
-  const { data } = await supabase.from("quote_lines").select("*").eq("quote_id", quoteId).order("position");
+/** Lignes AVEC prix d'achat (voir loadWizardCatalog pour `supabase` / `companyId`). */
+export async function loadQuoteLines(supabase: SupabaseClient, companyId: string, quoteId: string): Promise<QuoteLineRow[]> {
+  const { data } = await supabase.from("quote_lines").select("*").eq("company_id", companyId).eq("quote_id", quoteId).order("position");
   return (data ?? []).map((r) => ({
     id: r.id,
     kind: r.kind,

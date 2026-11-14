@@ -4,7 +4,7 @@ set role authenticated;
 set request.uid = '11111111-1111-1111-1111-111111111111';
 
 -- CERFA : réglementation par défaut
-select fluid_form_policy, accessory_purchase_coefficient from companies;
+select fluid_form_policy, company_accessory_purchase_coefficient() as accessory_purchase_coefficient from companies;
 
 -- Import avec champs techniques
 select apply_catalog_import('materiel', 'Distrib Sud', '{}', 't.xlsx', '[]',

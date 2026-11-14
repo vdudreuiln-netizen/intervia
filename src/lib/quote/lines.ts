@@ -96,11 +96,14 @@ export function buildLines(
 
   const productLine = (key: string, group: string, p: CatProduct, label: string): BuiltLine => {
     const prices = catalogPrices({ kind: "material", publicPriceCents: p.publicPriceCents, brandDiscount: p.brandDiscount, productDiscount: p.productDiscount, brandCoefficient: p.brandCoefficient, quoteCoefficient: s.materialCoefficient });
-    return { key, group, id: key, kind: "material", designation: label, quantity: 1, unit: "u", unitPurchaseCents: prices.purchaseCents, unitSaleCents: prices.saleCents, vatRate: s.vatRate, enabled: true, optional: false, productId: p.id, qtyEditable: true };
+    return { key, group, id: key, kind: "material", designation: label, quantity: 1, unit: "u", unitPurchaseCents: p.costHidden ? 0 : prices.purchaseCents, unitSaleCents: prices.saleCents, vatRate: s.vatRate, enabled: true, optional: false, productId: p.id, qtyEditable: true };
   };
 
   const accessoryLine = (key: string, group: string, a: CatAccessory, defaultQty: number, opts: { label?: string; enabled?: boolean; optional?: boolean; radioGroup?: string } = {}): BuiltLine => {
-    const prices = catalogPrices({ kind: "accessory", publicPriceCents: a.publicPriceCents, purchasePriceCents: a.purchasePriceCents, discount: a.discount, companyCoefficient: s.companyAccessoryCoefficient, purchaseCoefficient: s.accessoryPurchaseCoefficient, quoteCoefficient: s.accessoryCoefficient });
+    const prices =
+      a.fixedSaleCents !== undefined
+        ? { purchaseCents: 0, saleCents: a.fixedSaleCents, discount: 0 }
+        : catalogPrices({ kind: "accessory", publicPriceCents: a.publicPriceCents, purchasePriceCents: a.purchasePriceCents, discount: a.discount, companyCoefficient: s.companyAccessoryCoefficient, purchaseCoefficient: s.accessoryPurchaseCoefficient, quoteCoefficient: s.accessoryCoefficient });
     const enabled = m.toggles[key] ?? opts.enabled ?? true;
     const quantity = Math.max(0, m.qty[key] ?? defaultQty);
     return {

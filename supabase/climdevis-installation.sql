@@ -1,0 +1,1349 @@
+-- =============================================================================
+-- ClimDevis — installation complète de la base (à coller en une fois dans
+-- Supabase › SQL Editor › New query, puis « Run »). À exécuter UNE SEULE FOIS
+-- sur un projet neuf. Fichier généré par `npm run sql:bundle` : ne pas modifier
+-- à la main, modifiez les fichiers de supabase/migrations/.
+-- =============================================================================
+-- >>>>> 20261114000001_schema.sql
+-- =============================================================================
+-- ClimDevis — schéma initial
+-- Multi-entreprise : chaque ligne métier porte company_id, et la RLS limite
+-- tout accès à l'entreprise de l'utilisateur connecté.
+-- Montants en CENTIMES (bigint), taux en décimal (0.2 = 20 %).
+-- =============================================================================
+
+create extension if not exists pgcrypto;
+
+-- ---------------------------------------------------------------------------
+-- Types
+-- ---------------------------------------------------------------------------
+create type vat_regime as enum ('franchise', 'assujetti');
+create type product_type as enum (
+  'ue_mono', 'ue_multi', 'ui_murale', 'ui_console', 'ui_cassette', 'ui_gainable', 'accessoire'
+);
+create type insulation_level as enum ('faible', 'moyenne', 'bonne', 'rt2012');
+create type orientation as enum ('N', 'E', 'S', 'O', 'aucune');
+create type quote_status as enum ('brouillon', 'envoye', 'accepte', 'refuse');
+create type quote_presentation as enum ('particulier', 'detaille');
+create type line_kind as enum ('material', 'accessory', 'labor', 'travel', 'other');
+create type member_role as enum ('owner', 'member');
+
+-- ---------------------------------------------------------------------------
+-- Entreprises et utilisateurs
+-- ---------------------------------------------------------------------------
+create table companies (
+  id                    uuid primary key default gen_random_uuid(),
+  legal_name            text not null,
+  siret                 text check (siret is null or siret ~ '^[0-9]{14}$'),
+  address_line          text,
+  postal_code           text,
+  city                  text,
+  phone                 text,
+  email                 text,
+  logo_path             text,       -- chemin dans le bucket "company-assets"
+  stamp_path            text,       -- tampon / signature
+  -- Assurance décennale
+  insurer_name          text,
+  insurance_policy      text,
+  insurance_coverage    text,       -- zone géographique couverte (mention obligatoire)
+  -- RIB
+  bank_holder           text,
+  iban                  text,
+  bic                   text,
+  -- TVA
+  vat_regime            vat_regime not null default 'franchise',
+  vat_number            text,
+  default_vat_rate      numeric(4,3) not null default 0.100 check (default_vat_rate in (0.055, 0.1, 0.2)),
+  -- Charges sociales (en % du CA HT)
+  labor_charges_rate    numeric(5,4) not null default 0.2120 check (labor_charges_rate between 0 and 1),
+  material_charges_rate numeric(5,4) not null default 0.1230 check (material_charges_rate between 0 and 1),
+  -- Main d'œuvre et marge
+  daily_labor_rate_cents        bigint not null default 45000 check (daily_labor_rate_cents >= 0),
+  target_margin_per_day_cents   bigint not null default 30000 check (target_margin_per_day_cents >= 0),
+  -- Déplacement
+  base_address          text,
+  base_postal_code      text,
+  base_city             text,
+  base_citycode         text,       -- code INSEE : détection « chantier dans la commune »
+  base_lat              double precision,
+  base_lng              double precision,
+  travel_price_per_km_cents   integer not null default 50 check (travel_price_per_km_cents >= 0),
+  travel_minimum_fee_cents    integer not null default 3000 check (travel_minimum_fee_cents >= 0),
+  -- stationnement : activé chantier par chantier ; ici la valeur proposée par défaut
+  parking_per_day_cents       integer not null default 0 check (parking_per_day_cents >= 0),
+  -- minimum par jour « déplacement + stationnement » quand le stationnement est activé
+  travel_min_daily_with_parking_cents integer not null default 0 check (travel_min_daily_with_parking_cents >= 0),
+  -- Conditions des devis
+  quote_validity_days   integer not null default 30 check (quote_validity_days > 0),
+  payment_terms         text not null default 'Acompte de 30 % à la signature, solde à la fin des travaux.',
+  onboarding_done       boolean not null default false,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+
+-- "users" : profil applicatif rattaché à auth.users
+create table profiles (
+  id          uuid primary key references auth.users(id) on delete cascade,
+  company_id  uuid not null references companies(id) on delete cascade,
+  full_name   text,
+  role        member_role not null default 'owner',
+  created_at  timestamptz not null default now()
+);
+create index on profiles (company_id);
+
+-- Abonnement : écrit uniquement par le webhook Stripe (service_role)
+create table subscriptions (
+  company_id             uuid primary key references companies(id) on delete cascade,
+  status                 text not null default 'trialing',   -- trialing | active | past_due | canceled | expired
+  trial_ends_at          timestamptz not null default (now() + interval '14 days'),
+  stripe_customer_id     text unique,
+  stripe_subscription_id text unique,
+  current_period_end     timestamptz,
+  updated_at             timestamptz not null default now()
+);
+
+-- Coefficients de dimensionnement et de main d'œuvre (modifiables)
+create table settings_coefficients (
+  company_id  uuid primary key references companies(id) on delete cascade,
+  sizing      jsonb not null,  -- cf. SizingCoefficients (src/lib/sizing/sizing.ts)
+  labor_days  jsonb not null,  -- cf. LaborDaysParams
+  updated_at  timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Catalogue
+-- ---------------------------------------------------------------------------
+create table brands (
+  id           uuid primary key default gen_random_uuid(),
+  company_id   uuid not null references companies(id) on delete cascade,
+  name         text not null,
+  discount_rate numeric(5,4) not null default 0 check (discount_rate >= 0 and discount_rate < 1),
+  -- prix de vente = prix public × coefficient (1,00 = prix public)
+  sale_coefficient numeric(4,3) not null default 1.000 check (sale_coefficient > 0 and sale_coefficient <= 5),
+  is_example   boolean not null default false,
+  created_at   timestamptz not null default now(),
+  unique (company_id, name)
+);
+
+create table products (
+  id                 uuid primary key default gen_random_uuid(),
+  company_id         uuid not null references companies(id) on delete cascade,
+  brand_id           uuid not null references brands(id) on delete cascade,
+  range_name         text,
+  reference          text not null,
+  type               product_type not null,
+  cooling_kw         numeric(5,2) check (cooling_kw is null or cooling_kw > 0),
+  heating_kw         numeric(5,2) check (heating_kw is null or heating_kw > 0),
+  max_outlets        smallint check (max_outlets is null or max_outlets between 1 and 8),
+  -- multi-split : Σ puissances intérieures / puissance extérieure maxi (doc fabricant, 1,30 par défaut)
+  max_indoor_ratio   numeric(4,2) check (max_indoor_ratio is null or max_indoor_ratio between 1 and 2),
+  public_price_cents bigint not null check (public_price_cents >= 0),
+  -- remise propre au produit : NULL = on prend celle de la marque
+  discount_rate      numeric(5,4) check (discount_rate is null or (discount_rate >= 0 and discount_rate < 1)),
+  is_example         boolean not null default false,
+  active             boolean not null default true,
+  created_at         timestamptz not null default now(),
+  unique (company_id, brand_id, reference)
+);
+create index on products (company_id, type) where active;
+
+create table accessories (
+  id                 uuid primary key default gen_random_uuid(),
+  company_id         uuid not null references companies(id) on delete cascade,
+  category           text not null,  -- liaison, goulotte, support, pompe, condensats, electricite, gaz, autre
+  name               text not null,
+  diameter           text,           -- ex. '1/4 - 3/8' pour les liaisons
+  unit               text not null default 'u' check (unit in ('u', 'm', 'kg', 'forfait')),
+  public_price_cents bigint not null check (public_price_cents >= 0),
+  discount_rate      numeric(5,4) not null default 0 check (discount_rate >= 0 and discount_rate < 1),
+  is_example         boolean not null default false,
+  active             boolean not null default true,
+  created_at         timestamptz not null default now()
+);
+create index on accessories (company_id, category) where active;
+
+-- ---------------------------------------------------------------------------
+-- Clients, projets, pièces
+-- ---------------------------------------------------------------------------
+create table clients (
+  id          uuid primary key default gen_random_uuid(),
+  company_id  uuid not null references companies(id) on delete cascade,
+  name        text not null,
+  email       text,
+  phone       text,
+  address_line text,
+  postal_code text,
+  city        text,
+  created_at  timestamptz not null default now()
+);
+create index on clients (company_id);
+
+create table projects (
+  id             uuid primary key default gen_random_uuid(),
+  company_id     uuid not null references companies(id) on delete cascade,
+  client_id      uuid not null references clients(id) on delete restrict,
+  site_address   text,
+  site_postal_code text,
+  site_city      text,
+  site_citycode  text,
+  site_lat       double precision,
+  site_lng       double precision,
+  one_way_km     numeric(6,1),
+  same_commune   boolean not null default false,
+  parking_enabled boolean not null default false,
+  parking_per_day_cents integer check (parking_per_day_cents is null or parking_per_day_cents >= 0),
+  created_at     timestamptz not null default now()
+);
+create index on projects (company_id);
+
+create table rooms (
+  id               uuid primary key default gen_random_uuid(),
+  company_id       uuid not null references companies(id) on delete cascade,
+  project_id       uuid not null references projects(id) on delete cascade,
+  position         smallint not null default 0,
+  name             text not null,
+  surface_m2       numeric(6,2) not null check (surface_m2 > 0),
+  ceiling_height_m numeric(4,2) not null default 2.50 check (ceiling_height_m > 0),
+  orientation      orientation not null default 'aucune',
+  insulation       insulation_level not null default 'moyenne',
+  large_glazing    boolean not null default false,
+  under_roof       boolean not null default false,
+  need_watts       integer,          -- résultat du dimensionnement (instantané)
+  need_override_watts integer        -- si l'artisan force une valeur
+);
+create index on rooms (project_id);
+
+-- ---------------------------------------------------------------------------
+-- Devis
+-- ---------------------------------------------------------------------------
+create table quote_counters (
+  company_id  uuid not null references companies(id) on delete cascade,
+  year        smallint not null,
+  last_number integer not null default 0,
+  primary key (company_id, year)
+);
+
+create table quotes (
+  id               uuid primary key default gen_random_uuid(),
+  company_id       uuid not null references companies(id) on delete cascade,
+  project_id       uuid not null references projects(id) on delete cascade,
+  number           text not null,     -- D-2026-001 (attribué par trigger)
+  status           quote_status not null default 'brouillon',
+  presentation     quote_presentation not null default 'particulier',
+  vat_regime       vat_regime not null,           -- figé à la création
+  issue_date       date not null default current_date,
+  validity_days    integer not null default 30,
+  payment_terms    text,
+  labor_days       numeric(4,1) not null default 0,
+  travel_trips     numeric(4,1) not null default 0,
+  -- coefficient de vente propre au devis : remplace celui des marques s'il est renseigné
+  sale_coefficient numeric(4,3) check (sale_coefficient is null or (sale_coefficient > 0 and sale_coefficient <= 5)),
+  notes            text,
+  -- instantané du moteur de calcul (pour le tableau de bord)
+  total_ht_cents   bigint not null default 0,
+  total_ttc_cents  bigint not null default 0,
+  net_margin_cents bigint not null default 0,
+  sent_at          timestamptz,
+  decided_at       timestamptz,
+  duplicated_from  uuid references quotes(id) on delete set null,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  unique (company_id, number)
+);
+create index on quotes (company_id, status, issue_date desc);
+
+create table quote_lines (
+  id                  uuid primary key default gen_random_uuid(),
+  company_id          uuid not null references companies(id) on delete cascade,
+  quote_id            uuid not null references quotes(id) on delete cascade,
+  position            smallint not null default 0,
+  kind                line_kind not null,
+  product_id          uuid references products(id) on delete set null,
+  accessory_id        uuid references accessories(id) on delete set null,
+  room_id             uuid references rooms(id) on delete set null,
+  designation         text not null,
+  quantity            numeric(8,2) not null check (quantity >= 0),
+  unit                text not null default 'u',
+  unit_purchase_cents bigint not null default 0 check (unit_purchase_cents >= 0),
+  unit_sale_cents     bigint not null check (unit_sale_cents >= 0),
+  vat_rate            numeric(4,3) not null default 0.2 check (vat_rate in (0, 0.055, 0.1, 0.2))
+);
+create index on quote_lines (quote_id, position);
+
+-- ---------------------------------------------------------------------------
+-- Fonctions
+-- ---------------------------------------------------------------------------
+
+-- Entreprise de l'utilisateur connecté (utilisée par toutes les policies).
+create or replace function public.current_company_id()
+returns uuid language sql stable security definer set search_path = public as $$
+  select company_id from profiles where id = auth.uid()
+$$;
+
+-- Numérotation D-AAAA-NNN, sans trou ni doublon même en concurrence.
+create or replace function public.assign_quote_number()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  y smallint := extract(year from coalesce(new.issue_date, current_date));
+  n integer;
+begin
+  insert into quote_counters (company_id, year, last_number) values (new.company_id, y, 1)
+  on conflict (company_id, year) do update set last_number = quote_counters.last_number + 1
+  returning last_number into n;
+  new.number := format('D-%s-%s', y, lpad(n::text, 3, '0'));
+  return new;
+end $$;
+
+create trigger quotes_assign_number before insert on quotes
+  for each row execute function public.assign_quote_number();
+
+-- Le numéro et l'entreprise d'un devis ne changent jamais.
+create or replace function public.protect_quote_identity()
+returns trigger language plpgsql as $$
+begin
+  if new.number <> old.number or new.company_id <> old.company_id then
+    raise exception 'Le numéro et l''entreprise d''un devis ne peuvent pas être modifiés';
+  end if;
+  new.updated_at := now();
+  return new;
+end $$;
+create trigger quotes_protect_identity before update on quotes
+  for each row execute function public.protect_quote_identity();
+
+-- Vérifie que les références d'une ligne / pièce / projet appartiennent à la même entreprise.
+create or replace function public.check_same_company()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_table_name = 'quote_lines' then
+    if not exists (select 1 from quotes where id = new.quote_id and company_id = new.company_id) then
+      raise exception 'Devis inconnu pour cette entreprise';
+    end if;
+  elsif tg_table_name = 'rooms' or tg_table_name = 'quotes' then
+    if not exists (select 1 from projects where id = new.project_id and company_id = new.company_id) then
+      raise exception 'Projet inconnu pour cette entreprise';
+    end if;
+  elsif tg_table_name = 'projects' then
+    if not exists (select 1 from clients where id = new.client_id and company_id = new.company_id) then
+      raise exception 'Client inconnu pour cette entreprise';
+    end if;
+  elsif tg_table_name = 'products' then
+    if not exists (select 1 from brands where id = new.brand_id and company_id = new.company_id) then
+      raise exception 'Marque inconnue pour cette entreprise';
+    end if;
+  end if;
+  return new;
+end $$;
+
+create trigger quote_lines_same_company before insert or update on quote_lines for each row execute function public.check_same_company();
+create trigger rooms_same_company       before insert or update on rooms       for each row execute function public.check_same_company();
+create trigger quotes_same_company      before insert or update on quotes      for each row execute function public.check_same_company();
+create trigger projects_same_company    before insert or update on projects    for each row execute function public.check_same_company();
+create trigger products_same_company    before insert or update on products    for each row execute function public.check_same_company();
+
+-- ---------------------------------------------------------------------------
+-- Row-Level Security : chaque entreprise ne voit que ses données
+-- ---------------------------------------------------------------------------
+alter table companies             enable row level security;
+alter table profiles              enable row level security;
+alter table subscriptions         enable row level security;
+alter table settings_coefficients enable row level security;
+alter table brands                enable row level security;
+alter table products              enable row level security;
+alter table accessories           enable row level security;
+alter table clients               enable row level security;
+alter table projects              enable row level security;
+alter table rooms                 enable row level security;
+alter table quote_counters        enable row level security;
+alter table quotes                enable row level security;
+alter table quote_lines           enable row level security;
+
+create policy companies_select on companies for select using (id = current_company_id());
+create policy companies_update on companies for update using (id = current_company_id()) with check (id = current_company_id());
+
+create policy profiles_select on profiles for select using (company_id = current_company_id());
+create policy profiles_update_self on profiles for update using (id = auth.uid()) with check (company_id = current_company_id());
+
+-- lecture seule : écrit par le webhook Stripe avec la clé service_role
+create policy subscriptions_select on subscriptions for select using (company_id = current_company_id());
+-- lecture seule : alimenté par le trigger de numérotation
+create policy quote_counters_select on quote_counters for select using (company_id = current_company_id());
+
+do $$
+declare t text;
+begin
+  foreach t in array array['settings_coefficients','brands','products','accessories','clients','projects','rooms','quotes','quote_lines'] loop
+    execute format('create policy %1$s_all on %1$s for all using (company_id = current_company_id()) with check (company_id = current_company_id())', t);
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Stockage : logos et tampons, rangés sous {company_id}/...
+-- ---------------------------------------------------------------------------
+insert into storage.buckets (id, name, public) values ('company-assets', 'company-assets', false)
+on conflict (id) do nothing;
+
+create policy company_assets_rw on storage.objects for all
+  using (bucket_id = 'company-assets' and (storage.foldername(name))[1] = current_company_id()::text)
+  with check (bucket_id = 'company-assets' and (storage.foldername(name))[1] = current_company_id()::text);
+
+-- >>>>> 20261114000002_onboarding_and_example_catalog.sql
+-- =============================================================================
+-- Création de l'entreprise à l'inscription + catalogue exemple
+-- =============================================================================
+
+-- Catalogue d'exemple : 4 marques FICTIVES, prix FICTIFS (ordres de grandeur
+-- réalistes), clairement marqués « Exemple ». L'artisan peut tout supprimer.
+create or replace function public.seed_example_catalog(p_company_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  b record;
+  brand_id uuid;
+begin
+  for b in
+    select * from (values
+      ('Exemple – Arctica', 0.35::numeric, 1.00::numeric),
+      ('Exemple – Boréal',  0.40,          0.92),
+      ('Exemple – Cyclone', 0.30,          1.12),
+      ('Exemple – Dalia',   0.38,          0.85)
+    ) as t(name, discount, price_factor)
+  loop
+    insert into brands (company_id, name, discount_rate, is_example)
+    values (p_company_id, b.name, b.discount, true)
+    returning id into brand_id;
+
+    insert into products (company_id, brand_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, public_price_cents, is_example)
+    select p_company_id, brand_id, p.range_name,
+           upper(left(split_part(b.name, '– ', 2), 3)) || '-' || p.ref,
+           p.type::product_type, p.cool, p.heat, p.outlets,
+           case when p.type = 'ue_multi' then 1.30 end,
+           (round(p.price * b.price_factor / 10) * 10 * 100)::bigint,
+           true
+    from (values
+      -- unités extérieures mono-split
+      ('Confort',  'UE25',  'ue_mono',     2.5,  3.2, 1, 890),
+      ('Confort',  'UE35',  'ue_mono',     3.5,  4.0, 1, 1090),
+      ('Confort',  'UE50',  'ue_mono',     5.0,  5.8, 1, 1590),
+      ('Confort',  'UE71',  'ue_mono',     7.1,  8.2, 1, 2290),
+      -- unités extérieures multi-split
+      ('Multi',    'M2-50', 'ue_multi',    5.0,  5.6, 2, 1990),
+      ('Multi',    'M3-68', 'ue_multi',    6.8,  8.6, 3, 2790),
+      ('Multi',    'M4-80', 'ue_multi',    8.0,  9.4, 4, 3390),
+      ('Multi',    'M5-100','ue_multi',   10.0, 12.0, 5, 4290),
+      -- unités intérieures murales
+      ('Confort',  'MU20',  'ui_murale',   2.0,  2.5, null, 420),
+      ('Confort',  'MU25',  'ui_murale',   2.5,  3.2, null, 460),
+      ('Confort',  'MU35',  'ui_murale',   3.5,  4.0, null, 540),
+      ('Confort',  'MU50',  'ui_murale',   5.0,  5.8, null, 790),
+      ('Confort',  'MU71',  'ui_murale',   7.1,  8.2, null, 1090),
+      -- consoles
+      ('Confort',  'CO25',  'ui_console',  2.5,  3.4, null, 690),
+      ('Confort',  'CO35',  'ui_console',  3.5,  4.5, null, 790),
+      -- cassettes
+      ('Pro',      'CA35',  'ui_cassette', 3.5,  4.0, null, 990),
+      ('Pro',      'CA50',  'ui_cassette', 5.0,  6.0, null, 1190),
+      -- gainables
+      ('Pro',      'GA35',  'ui_gainable', 3.5,  4.0, null, 1190),
+      ('Pro',      'GA50',  'ui_gainable', 5.0,  6.0, null, 1390),
+      ('Pro',      'GA71',  'ui_gainable', 7.1,  8.0, null, 1790),
+      ('Pro',      'GA100', 'ui_gainable',10.0, 11.2, null, 2390)
+    ) as p(range_name, ref, type, cool, heat, outlets, price);
+  end loop;
+
+  insert into accessories (company_id, category, name, diameter, unit, public_price_cents, discount_rate, is_example)
+  values
+    (p_company_id, 'liaison',     'Liaison frigorifique isolée',            '1/4 - 3/8', 'm',  1200, 0.30, true),
+    (p_company_id, 'liaison',     'Liaison frigorifique isolée',            '1/4 - 1/2', 'm',  1500, 0.30, true),
+    (p_company_id, 'liaison',     'Liaison frigorifique isolée',            '3/8 - 5/8', 'm',  2200, 0.30, true),
+    (p_company_id, 'goulotte',    'Goulotte de finition 80 × 60',           null,        'm',  1400, 0.25, true),
+    (p_company_id, 'goulotte',    'Coude / accessoire de goulotte',         null,        'u',   900, 0.25, true),
+    (p_company_id, 'support',     'Support mural unité extérieure',         null,        'u',  4500, 0.25, true),
+    (p_company_id, 'support',     'Support sol (silent-blocs) unité extérieure', null,   'u',  6000, 0.25, true),
+    (p_company_id, 'pompe',       'Pompe de relevage des condensats',       null,        'u', 12000, 0.25, true),
+    (p_company_id, 'condensats',  'Tube d''évacuation des condensats',      '16 mm',     'm',   250, 0.25, true),
+    (p_company_id, 'electricite', 'Câble d''alimentation 3G2,5',            null,        'm',   280, 0.25, true),
+    (p_company_id, 'electricite', 'Câble de liaison 4G1,5',                 null,        'm',   220, 0.25, true),
+    (p_company_id, 'electricite', 'Disjoncteur 16 A courbe D',              null,        'u',  1800, 0.25, true),
+    (p_company_id, 'electricite', 'Disjoncteur 20 A courbe D',              null,        'u',  2000, 0.25, true),
+    (p_company_id, 'gaz',         'Fluide R32 (complément de charge)',      null,        'kg', 4500, 0.20, true);
+end $$;
+
+-- Valeurs par défaut des coefficients (identiques à DEFAULT_SIZING / DEFAULT_LABOR_DAYS).
+create or replace function public.default_sizing_coefficients()
+returns jsonb language sql immutable as $$
+  select jsonb_build_object(
+    'wattsPerM3',  jsonb_build_object('faible', 45, 'moyenne', 38, 'bonne', 32, 'rt2012', 25),
+    'orientation', jsonb_build_object('N', 0.9, 'E', 1.0, 'S', 1.1, 'O', 1.15, 'aucune', 1.0),
+    'underRoof', 1.2, 'largeGlazing', 1.15, 'unitMinRatio', 0.95, 'unitMaxRatio', 1.6)
+$$;
+
+create or replace function public.default_labor_days()
+returns jsonb language sql immutable as $$
+  select jsonb_build_object(
+    'perOutdoorUnit', 0.25,
+    'perIndoorUnit', jsonb_build_object('mural', 0.5, 'console', 0.5, 'cassette', 0.75, 'gainable', 1.5),
+    'perExtraLinkMeter', 0.02, 'includedLinkMetersPerIndoor', 5, 'commissioning', 0.25, 'roundTo', 0.5)
+$$;
+
+-- Appelé une fois par l'utilisateur connecté au début de l'onboarding.
+create or replace function public.create_company_for_current_user(p_legal_name text, p_full_name text default null)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  cid uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Non authentifié';
+  end if;
+  select company_id into cid from profiles where id = auth.uid();
+  if cid is not null then
+    return cid; -- idempotent
+  end if;
+
+  insert into companies (legal_name, email)
+  values (coalesce(nullif(trim(p_legal_name), ''), 'Mon entreprise'), (select email from auth.users where id = auth.uid()))
+  returning id into cid;
+
+  insert into profiles (id, company_id, full_name, role) values (auth.uid(), cid, p_full_name, 'owner');
+  insert into subscriptions (company_id) values (cid);
+  insert into settings_coefficients (company_id, sizing, labor_days)
+  values (cid, default_sizing_coefficients(), default_labor_days());
+  perform seed_example_catalog(cid);
+  return cid;
+end $$;
+
+revoke all on function public.create_company_for_current_user(text, text) from public, anon;
+grant execute on function public.create_company_for_current_user(text, text) to authenticated;
+revoke all on function public.seed_example_catalog(uuid) from public, anon, authenticated;
+
+-- >>>>> 20261114000003_catalog_import.sql
+-- =============================================================================
+-- Étape 3 : catalogue — fournisseurs, import de tarifs, historique des prix,
+-- coefficient de vente des accessoires.
+-- =============================================================================
+
+-- Coefficient de vente des accessoires : prix de vente = prix d'achat × coefficient.
+alter table companies add column accessory_sale_coefficient numeric(4,3) not null default 1.300
+  check (accessory_sale_coefficient > 0 and accessory_sale_coefficient <= 5);
+alter table quotes add column accessory_sale_coefficient numeric(4,3)
+  check (accessory_sale_coefficient is null or (accessory_sale_coefficient > 0 and accessory_sale_coefficient <= 5));
+
+-- Fournisseurs (distributeurs) : on y mémorise la dernière correspondance de colonnes.
+create table suppliers (
+  id              uuid primary key default gen_random_uuid(),
+  company_id      uuid not null references companies(id) on delete cascade,
+  name            text not null,
+  -- { "materiel": { "reference": "Code article", ... }, "accessoires": { ... } }
+  column_mapping  jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now(),
+  unique (company_id, name)
+);
+
+alter table products    add column supplier_id uuid references suppliers(id) on delete set null;
+alter table accessories add column supplier_id uuid references suppliers(id) on delete set null;
+alter table accessories add column reference text;
+create unique index accessories_company_reference on accessories (company_id, reference) where reference is not null;
+
+-- Journal des imports
+create table catalog_imports (
+  id            uuid primary key default gen_random_uuid(),
+  company_id    uuid not null references companies(id) on delete cascade,
+  supplier_id   uuid references suppliers(id) on delete set null,
+  target        text not null check (target in ('materiel', 'accessoires')),
+  filename      text,
+  created_count integer not null default 0,
+  updated_count integer not null default 0,
+  created_at    timestamptz not null default now()
+);
+
+-- Historique des prix : alimenté automatiquement par trigger (import OU saisie manuelle).
+create table price_history (
+  id                     uuid primary key default gen_random_uuid(),
+  company_id             uuid not null references companies(id) on delete cascade,
+  product_id             uuid references products(id) on delete cascade,
+  accessory_id           uuid references accessories(id) on delete cascade,
+  old_public_price_cents bigint,
+  new_public_price_cents bigint not null,
+  old_discount_rate      numeric(5,4),
+  new_discount_rate      numeric(5,4),
+  import_id              uuid references catalog_imports(id) on delete set null,
+  changed_at             timestamptz not null default now(),
+  check ((product_id is null) <> (accessory_id is null))
+);
+create index on price_history (product_id, changed_at desc);
+create index on price_history (accessory_id, changed_at desc);
+
+create or replace function public.log_price_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  imp uuid := nullif(current_setting('climdevis.import_id', true), '')::uuid;
+begin
+  if tg_op = 'UPDATE'
+     and new.public_price_cents is not distinct from old.public_price_cents
+     and new.discount_rate is not distinct from old.discount_rate then
+    return new;
+  end if;
+  insert into price_history (company_id, product_id, accessory_id, old_public_price_cents, new_public_price_cents, old_discount_rate, new_discount_rate, import_id)
+  values (
+    new.company_id,
+    case when tg_table_name = 'products' then new.id end,
+    case when tg_table_name = 'accessories' then new.id end,
+    case when tg_op = 'UPDATE' then old.public_price_cents end,
+    new.public_price_cents,
+    case when tg_op = 'UPDATE' then old.discount_rate end,
+    new.discount_rate,
+    imp
+  );
+  return new;
+end $$;
+
+create trigger products_price_history after insert or update on products
+  for each row execute function public.log_price_change();
+create trigger accessories_price_history after insert or update on accessories
+  for each row execute function public.log_price_change();
+
+-- Le fournisseur d'un produit / accessoire doit appartenir à la même entreprise.
+create or replace function public.check_supplier_company()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.supplier_id is not null and not exists (select 1 from suppliers where id = new.supplier_id and company_id = new.company_id) then
+    raise exception 'Fournisseur inconnu pour cette entreprise';
+  end if;
+  return new;
+end $$;
+create trigger products_supplier_company before insert or update of supplier_id on products for each row execute function public.check_supplier_company();
+create trigger accessories_supplier_company before insert or update of supplier_id on accessories for each row execute function public.check_supplier_company();
+
+alter table suppliers       enable row level security;
+alter table catalog_imports enable row level security;
+alter table price_history   enable row level security;
+create policy suppliers_all on suppliers for all using (company_id = current_company_id()) with check (company_id = current_company_id());
+create policy catalog_imports_select on catalog_imports for select using (company_id = current_company_id());
+create policy catalog_imports_insert on catalog_imports for insert with check (company_id = current_company_id());
+create policy price_history_select on price_history for select using (company_id = current_company_id());
+
+-- -----------------------------------------------------------------------------
+-- Application d'un import, en UNE transaction (tout ou rien).
+-- Le plan (créations / mises à jour) est calculé et validé côté serveur par
+-- src/lib/catalog/import.ts ; cette fonction l'applique sous la RLS de l'appelant.
+--
+-- p_brands  : [{ "name": "...", "discount_rate": 0.35 | null }]  marques à créer si absentes
+-- p_creates : [{ "brand": "...", "reference": "...", "type": "ue_mono", ... }]  (matériel)
+--             [{ "reference": "...", "category": "...", "name": "...", ... }]   (accessoires)
+-- p_updates : [{ "id": "...", "public_price_cents": 123, "discount_rate": 0.3 | absent, ... }]
+-- -----------------------------------------------------------------------------
+create or replace function public.apply_catalog_import(
+  p_target text,
+  p_supplier_name text,
+  p_mapping jsonb,
+  p_filename text,
+  p_brands jsonb,
+  p_creates jsonb,
+  p_updates jsonb
+) returns uuid language plpgsql security invoker set search_path = public as $$
+declare
+  cid uuid := current_company_id();
+  sid uuid;
+  imp uuid;
+  r jsonb;
+begin
+  if cid is null then raise exception 'Non authentifié'; end if;
+  if p_target not in ('materiel', 'accessoires') then raise exception 'Cible d''import invalide'; end if;
+
+  insert into suppliers (company_id, name) values (cid, trim(p_supplier_name))
+  on conflict (company_id, name) do nothing;
+  select id into sid from suppliers where company_id = cid and name = trim(p_supplier_name);
+  update suppliers set column_mapping = column_mapping || jsonb_build_object(p_target, p_mapping) where id = sid;
+
+  insert into catalog_imports (company_id, supplier_id, target, filename, created_count, updated_count)
+  values (cid, sid, p_target, p_filename, jsonb_array_length(p_creates), jsonb_array_length(p_updates))
+  returning id into imp;
+  perform set_config('climdevis.import_id', imp::text, true);
+
+  if p_target = 'materiel' then
+    insert into brands (company_id, name, discount_rate)
+    select cid, b->>'name', coalesce((b->>'discount_rate')::numeric, 0)
+    from jsonb_array_elements(p_brands) b
+    on conflict (company_id, name) do nothing;
+
+    insert into products (company_id, brand_id, supplier_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, public_price_cents, discount_rate)
+    select cid, br.id, sid, r2->>'range_name', r2->>'reference', (r2->>'type')::product_type,
+           (r2->>'cooling_kw')::numeric, (r2->>'heating_kw')::numeric, (r2->>'max_outlets')::smallint,
+           (r2->>'max_indoor_ratio')::numeric, (r2->>'public_price_cents')::bigint, (r2->>'discount_rate')::numeric
+    from jsonb_array_elements(p_creates) r2
+    join brands br on br.company_id = cid and br.name = r2->>'brand';
+
+    for r in select * from jsonb_array_elements(p_updates) loop
+      update products set
+        supplier_id        = sid,
+        public_price_cents = (r->>'public_price_cents')::bigint,
+        discount_rate      = case when r ? 'discount_rate' then (r->>'discount_rate')::numeric else discount_rate end,
+        range_name         = coalesce(r->>'range_name', range_name),
+        cooling_kw         = coalesce((r->>'cooling_kw')::numeric, cooling_kw),
+        heating_kw         = coalesce((r->>'heating_kw')::numeric, heating_kw),
+        max_outlets        = coalesce((r->>'max_outlets')::smallint, max_outlets),
+        active             = true
+      where id = (r->>'id')::uuid and company_id = cid;
+    end loop;
+  else
+    insert into accessories (company_id, supplier_id, reference, category, name, diameter, unit, public_price_cents, discount_rate)
+    select cid, sid, r2->>'reference', r2->>'category', r2->>'name', r2->>'diameter', coalesce(r2->>'unit', 'u'),
+           (r2->>'public_price_cents')::bigint, coalesce((r2->>'discount_rate')::numeric, 0)
+    from jsonb_array_elements(p_creates) r2;
+
+    for r in select * from jsonb_array_elements(p_updates) loop
+      update accessories set
+        supplier_id        = sid,
+        public_price_cents = (r->>'public_price_cents')::bigint,
+        discount_rate      = case when r ? 'discount_rate' then (r->>'discount_rate')::numeric else discount_rate end,
+        name               = coalesce(r->>'name', name),
+        active             = true
+      where id = (r->>'id')::uuid and company_id = cid;
+    end loop;
+  end if;
+
+  return imp;
+end $$;
+
+revoke all on function public.apply_catalog_import(text, text, jsonb, text, jsonb, jsonb, jsonb) from public, anon;
+grant execute on function public.apply_catalog_import(text, text, jsonb, text, jsonb, jsonb, jsonb) to authenticated;
+
+-- >>>>> 20261114000004_quote_wizard.sql
+-- =============================================================================
+-- Étape 4 : assistant de devis — données techniques des unités, rôles des
+-- accessoires ajoutés automatiquement, pièces, réglages de mise en service.
+-- =============================================================================
+
+-- Fiche produit : liaisons et charge de fluide (notice fabricant)
+alter table products add column link_diameters text;                     -- ex. « 1/4 - 3/8 »
+alter table products add column precharged_length_m numeric(5,1)
+  check (precharged_length_m is null or precharged_length_m >= 0);      -- longueur pré-chargée de l'UE
+alter table products add column extra_charge_g_per_m smallint
+  check (extra_charge_g_per_m is null or extra_charge_g_per_m between 0 and 500); -- complément au mètre
+
+-- Rôle d'un accessoire dans l'ajout automatique au devis
+alter table accessories add column auto_role text check (auto_role is null or auto_role in (
+  'liaison', 'support_mural', 'support_sol', 'goulotte', 'condensats', 'pompe_relevage',
+  'cable_alim', 'cable_liaison', 'disjoncteur', 'gaz',
+  'plenum', 'gaine', 'bouche_soufflage', 'grille_reprise',
+  'registre_zonage', 'thermostat_zone', 'module_zonage'
+));
+
+-- Pièces : niveau (0 = RDC) et type d'unité intérieure souhaité
+alter table rooms add column level smallint not null default 0 check (level between -1 and 5);
+alter table rooms add column indoor_type text not null default 'mural' check (indoor_type in ('mural', 'console', 'cassette'));
+
+-- Chantier : gainable possible ?
+alter table projects add column gainable_access boolean not null default false;
+
+-- Entreprise : marque préférée (option Premium), prestations de mise en service
+alter table companies add column preferred_brand_id uuid references brands(id) on delete set null;
+alter table companies add column commissioning_price_cents integer not null default 0 check (commissioning_price_cents >= 0);
+alter table companies add column fluid_form_price_cents integer not null default 0 check (fluid_form_price_cents >= 0);
+alter table companies add column fluid_form_policy text not null default 'complement' check (fluid_form_policy in ('complement', 'always'));
+alter table companies add column default_electric_length_m numeric(5,1) not null default 10 check (default_electric_length_m >= 0);
+
+-- Devis : état de l'assistant (sélection, métré, jours…) pour reprendre plus tard
+alter table quotes add column wizard jsonb not null default '{}'::jsonb;
+alter table quotes add column one_way_km numeric(6,1);
+
+-- La marque préférée doit appartenir à l'entreprise
+create or replace function public.check_preferred_brand()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.preferred_brand_id is not null and not exists (select 1 from brands where id = new.preferred_brand_id and company_id = new.id) then
+    raise exception 'Marque inconnue pour cette entreprise';
+  end if;
+  return new;
+end $$;
+create trigger companies_preferred_brand before insert or update of preferred_brand_id on companies
+  for each row execute function public.check_preferred_brand();
+
+-- -----------------------------------------------------------------------------
+-- Catalogue exemple : rôles, données techniques, accessoires gainable / zonage
+-- -----------------------------------------------------------------------------
+create or replace function public.seed_example_accessories_v2(p_company_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update accessories set auto_role = case
+      when category = 'liaison' then 'liaison'
+      when name like 'Support mural%' then 'support_mural'
+      when name like 'Support sol%' then 'support_sol'
+      when name like 'Goulotte%' then 'goulotte'
+      when name like 'Pompe de relevage%' then 'pompe_relevage'
+      when name like 'Tube d''évacuation%' then 'condensats'
+      when name like 'Câble d''alimentation%' then 'cable_alim'
+      when name like 'Câble de liaison%' then 'cable_liaison'
+      when name like 'Disjoncteur 16 A%' then 'disjoncteur'
+      when category = 'gaz' then 'gaz'
+      else auto_role end
+  where company_id = p_company_id and is_example;
+
+  insert into accessories (company_id, category, name, diameter, unit, public_price_cents, discount_rate, is_example, auto_role) values
+    (p_company_id, 'aeraulique', 'Plénum de soufflage isolé',            null,     'u',  9500, 0.25, true, 'plenum'),
+    (p_company_id, 'aeraulique', 'Gaine souple isolée',                   'Ø 160',  'm',   900, 0.25, true, 'gaine'),
+    (p_company_id, 'aeraulique', 'Bouche de soufflage linéaire',          null,     'u',  4500, 0.25, true, 'bouche_soufflage'),
+    (p_company_id, 'aeraulique', 'Grille de reprise avec filtre',         null,     'u',  6500, 0.25, true, 'grille_reprise'),
+    (p_company_id, 'zonage',     'Registre motorisé',                     'Ø 160',  'u', 14000, 0.25, true, 'registre_zonage'),
+    (p_company_id, 'zonage',     'Thermostat d''ambiance de zone',        null,     'u',  9000, 0.25, true, 'thermostat_zone'),
+    (p_company_id, 'zonage',     'Module de régulation de zonage',        null,     'u', 39000, 0.25, true, 'module_zonage');
+
+  -- Données techniques fictives mais plausibles (à vérifier sur les notices réelles)
+  update products set
+    link_diameters = case
+      when cooling_kw <= 3.5 then '1/4 - 3/8'
+      when cooling_kw <= 5.0 then '1/4 - 1/2'
+      else '3/8 - 5/8' end,
+    precharged_length_m = case when type in ('ue_mono', 'ue_multi') then (case when type = 'ue_multi' then 30 else 7.5 end) end,
+    extra_charge_g_per_m = case when type in ('ue_mono', 'ue_multi') then (case when cooling_kw >= 7 then 40 else 20 end) end
+  where company_id = p_company_id and is_example and type <> 'accessoire';
+end $$;
+
+-- Entreprises existantes ayant encore le catalogue d'exemple
+do $$
+declare c record;
+begin
+  for c in select distinct company_id from accessories where is_example loop
+    perform seed_example_accessories_v2(c.company_id);
+  end loop;
+end $$;
+
+-- Nouvelles entreprises : on enchaîne les deux semences
+create or replace function public.create_company_for_current_user(p_legal_name text, p_full_name text default null)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  cid uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Non authentifié';
+  end if;
+  select company_id into cid from profiles where id = auth.uid();
+  if cid is not null then
+    return cid;
+  end if;
+
+  insert into companies (legal_name, email)
+  values (coalesce(nullif(trim(p_legal_name), ''), 'Mon entreprise'), (select email from auth.users where id = auth.uid()))
+  returning id into cid;
+
+  insert into profiles (id, company_id, full_name, role) values (auth.uid(), cid, p_full_name, 'owner');
+  insert into subscriptions (company_id) values (cid);
+  insert into settings_coefficients (company_id, sizing, labor_days)
+  values (cid, default_sizing_coefficients(), default_labor_days());
+  perform seed_example_catalog(cid);
+  perform seed_example_accessories_v2(cid);
+  return cid;
+end $$;
+
+revoke all on function public.seed_example_accessories_v2(uuid) from public, anon, authenticated;
+
+-- >>>>> 20261114000005_quote_editing.sql
+-- =============================================================================
+-- Étape 5 : retouches du devis, remise commerciale, prix des accessoires,
+-- fiche fluides par défaut, champs techniques à l'import.
+-- =============================================================================
+
+-- Accessoires : plancher « prix d'achat × coefficient » et accessoires sans prix public
+alter table companies add column accessory_purchase_coefficient numeric(4,3) not null default 2.000
+  check (accessory_purchase_coefficient > 0 and accessory_purchase_coefficient <= 5);
+alter table accessories alter column public_price_cents drop not null;
+alter table accessories add column purchase_price_cents bigint check (purchase_price_cents is null or purchase_price_cents >= 0);
+alter table accessories add constraint accessories_has_a_price check (public_price_cents is not null or purchase_price_cents is not null);
+
+-- Historique : un accessoire sans prix public enregistre son prix d'achat
+create or replace function public.log_price_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  imp uuid := nullif(current_setting('climdevis.import_id', true), '')::uuid;
+  new_price bigint;
+  old_price bigint;
+begin
+  if tg_table_name = 'accessories' then
+    new_price := coalesce(new.public_price_cents, new.purchase_price_cents);
+    old_price := case when tg_op = 'UPDATE' then coalesce(old.public_price_cents, old.purchase_price_cents) end;
+  else
+    new_price := new.public_price_cents;
+    old_price := case when tg_op = 'UPDATE' then old.public_price_cents end;
+  end if;
+  if tg_op = 'UPDATE' and new_price is not distinct from old_price and new.discount_rate is not distinct from old.discount_rate then
+    return new;
+  end if;
+  insert into price_history (company_id, product_id, accessory_id, old_public_price_cents, new_public_price_cents, old_discount_rate, new_discount_rate, import_id)
+  values (
+    new.company_id,
+    case when tg_table_name = 'products' then new.id end,
+    case when tg_table_name = 'accessories' then new.id end,
+    old_price,
+    new_price,
+    case when tg_op = 'UPDATE' then old.discount_rate end,
+    new.discount_rate,
+    imp
+  );
+  return new;
+end $$;
+
+-- Fiche d'intervention fluides : la réglementation l'impose à chaque ouverture du circuit
+alter table companies alter column fluid_form_policy set default 'always';
+update companies set fluid_form_policy = 'always' where fluid_form_policy = 'complement';
+
+-- Retouches du devis
+alter table quote_lines add column origin text not null default 'wizard' check (origin in ('wizard', 'manual'));
+alter table quote_lines add column wizard_key text; -- clé de la ligne générée par l'assistant
+alter table quote_lines alter column vat_rate set default 0.1;
+
+-- Remise commerciale globale (montant HT en centimes, ou pourcentage décimal)
+alter table quotes add column discount_kind text check (discount_kind is null or discount_kind in ('amount', 'percent'));
+alter table quotes add column discount_value numeric(12,4) check (discount_value is null or discount_value >= 0);
+alter table quotes add constraint quotes_discount_pair check ((discount_kind is null) = (discount_value is null));
+alter table quotes add column discount_cents bigint not null default 0;
+
+-- -----------------------------------------------------------------------------
+-- Import de tarif : diamètres de liaison, longueur pré-chargée, charge au mètre
+-- -----------------------------------------------------------------------------
+create or replace function public.apply_catalog_import(
+  p_target text,
+  p_supplier_name text,
+  p_mapping jsonb,
+  p_filename text,
+  p_brands jsonb,
+  p_creates jsonb,
+  p_updates jsonb
+) returns uuid language plpgsql security invoker set search_path = public as $$
+declare
+  cid uuid := current_company_id();
+  sid uuid;
+  imp uuid;
+  r jsonb;
+begin
+  if cid is null then raise exception 'Non authentifié'; end if;
+  if p_target not in ('materiel', 'accessoires') then raise exception 'Cible d''import invalide'; end if;
+
+  insert into suppliers (company_id, name) values (cid, trim(p_supplier_name))
+  on conflict (company_id, name) do nothing;
+  select id into sid from suppliers where company_id = cid and name = trim(p_supplier_name);
+  update suppliers set column_mapping = column_mapping || jsonb_build_object(p_target, p_mapping) where id = sid;
+
+  insert into catalog_imports (company_id, supplier_id, target, filename, created_count, updated_count)
+  values (cid, sid, p_target, p_filename, jsonb_array_length(p_creates), jsonb_array_length(p_updates))
+  returning id into imp;
+  perform set_config('climdevis.import_id', imp::text, true);
+
+  if p_target = 'materiel' then
+    insert into brands (company_id, name, discount_rate)
+    select cid, b->>'name', coalesce((b->>'discount_rate')::numeric, 0)
+    from jsonb_array_elements(p_brands) b
+    on conflict (company_id, name) do nothing;
+
+    insert into products (company_id, brand_id, supplier_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio,
+                          link_diameters, precharged_length_m, extra_charge_g_per_m, public_price_cents, discount_rate)
+    select cid, br.id, sid, r2->>'range_name', r2->>'reference', (r2->>'type')::product_type,
+           (r2->>'cooling_kw')::numeric, (r2->>'heating_kw')::numeric, (r2->>'max_outlets')::smallint,
+           (r2->>'max_indoor_ratio')::numeric, r2->>'link_diameters', (r2->>'precharged_length_m')::numeric,
+           (r2->>'extra_charge_g_per_m')::smallint, (r2->>'public_price_cents')::bigint, (r2->>'discount_rate')::numeric
+    from jsonb_array_elements(p_creates) r2
+    join brands br on br.company_id = cid and br.name = r2->>'brand';
+
+    for r in select * from jsonb_array_elements(p_updates) loop
+      update products set
+        supplier_id          = sid,
+        public_price_cents   = (r->>'public_price_cents')::bigint,
+        discount_rate        = case when r ? 'discount_rate' then (r->>'discount_rate')::numeric else discount_rate end,
+        range_name           = coalesce(r->>'range_name', range_name),
+        cooling_kw           = coalesce((r->>'cooling_kw')::numeric, cooling_kw),
+        heating_kw           = coalesce((r->>'heating_kw')::numeric, heating_kw),
+        max_outlets          = coalesce((r->>'max_outlets')::smallint, max_outlets),
+        link_diameters       = coalesce(r->>'link_diameters', link_diameters),
+        precharged_length_m  = coalesce((r->>'precharged_length_m')::numeric, precharged_length_m),
+        extra_charge_g_per_m = coalesce((r->>'extra_charge_g_per_m')::smallint, extra_charge_g_per_m),
+        active               = true
+      where id = (r->>'id')::uuid and company_id = cid;
+    end loop;
+  else
+    insert into accessories (company_id, supplier_id, reference, category, name, diameter, unit, public_price_cents, discount_rate)
+    select cid, sid, r2->>'reference', r2->>'category', r2->>'name', r2->>'diameter', coalesce(r2->>'unit', 'u'),
+           (r2->>'public_price_cents')::bigint, coalesce((r2->>'discount_rate')::numeric, 0)
+    from jsonb_array_elements(p_creates) r2;
+
+    for r in select * from jsonb_array_elements(p_updates) loop
+      update accessories set
+        supplier_id        = sid,
+        public_price_cents = (r->>'public_price_cents')::bigint,
+        discount_rate      = case when r ? 'discount_rate' then (r->>'discount_rate')::numeric else discount_rate end,
+        name               = coalesce(r->>'name', name),
+        active             = true
+      where id = (r->>'id')::uuid and company_id = cid;
+    end loop;
+  end if;
+
+  return imp;
+end $$;
+
+-- >>>>> 20261114000006_quote_document.sql
+-- =============================================================================
+-- Étape 6 : document du devis — médiateur, acompte, échéancier, rétractation.
+-- =============================================================================
+
+-- Médiateur de la consommation (obligatoire pour un client particulier)
+alter table companies add column mediator_name text;
+alter table companies add column mediator_address text;
+alter table companies add column mediator_website text;
+
+-- Acompte par défaut (30 %)
+alter table companies add column deposit_rate numeric(4,3) not null default 0.300 check (deposit_rate >= 0 and deposit_rate < 1);
+
+-- Réglages du document, par devis
+alter table quotes add column signed_off_premises boolean not null default true;   -- signé chez le client
+alter table quotes add column early_start boolean not null default false;          -- démarrage avant la fin des 14 jours
+alter table quotes add column urgent_repair boolean not null default false;        -- dépannage urgent demandé par le client
+alter table quotes add column deposit_rate numeric(4,3) check (deposit_rate is null or (deposit_rate >= 0 and deposit_rate < 1));
+-- échéancier : [{ "label": "À la livraison du matériel", "rate": 0.4 }, …] (la somme fait 100 %)
+alter table quotes add column payment_schedule jsonb;
+
+-- >>>>> 20261114000007_dashboard.sql
+-- =============================================================================
+-- Étape 7 : tableau de bord — relances, duplication.
+-- =============================================================================
+
+-- Délai avant relance d'un devis envoyé sans réponse (7 jours par défaut)
+alter table companies add column follow_up_days smallint not null default 7 check (follow_up_days between 1 and 90);
+
+alter table quotes add column last_follow_up_at timestamptz;
+alter table quotes add column follow_up_count smallint not null default 0;
+
+-- Le devis d'origine d'une copie doit appartenir à la même entreprise
+create or replace function public.check_duplicated_from()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.duplicated_from is not null and not exists (select 1 from quotes where id = new.duplicated_from and company_id = new.company_id) then
+    raise exception 'Devis d''origine inconnu pour cette entreprise';
+  end if;
+  return new;
+end $$;
+create trigger quotes_duplicated_from before insert or update of duplicated_from on quotes
+  for each row execute function public.check_duplicated_from();
+
+create index if not exists quotes_company_decided on quotes (company_id, decided_at) where status = 'accepte';
+
+-- >>>>> 20261114000008_team_and_billing.sql
+-- =============================================================================
+-- Étape 8 : équipe (rôles, invitations), abonnement (formules, lancement),
+-- lecture seule à la fin de l'essai — garanties EN BASE, pas seulement à l'écran.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- Rôles
+-- ---------------------------------------------------------------------------
+alter table profiles add column access_role text not null default 'admin' check (access_role in ('admin', 'technicien'));
+alter table profiles add column email text;
+update profiles p set email = u.email from auth.users u where u.id = p.id and p.email is null;
+
+alter table companies add column technicians_see_margins boolean not null default false;
+
+-- Un utilisateur ne modifie que son nom : ni son entreprise, ni son rôle.
+drop policy if exists profiles_update_self on profiles;
+create policy profiles_update_self on profiles for update using (id = auth.uid()) with check (id = auth.uid());
+revoke update on profiles from authenticated;
+grant update (full_name) on profiles to authenticated;
+
+create or replace function public.current_is_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce((select access_role = 'admin' from profiles where id = auth.uid()), false)
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Abonnement
+-- ---------------------------------------------------------------------------
+alter table subscriptions add column plan text check (plan is null or plan in ('solo', 'equipe', 'entreprise'));
+alter table subscriptions add column billing_interval text check (billing_interval is null or billing_interval in ('month', 'year'));
+alter table subscriptions add column launch_offer boolean not null default false;
+alter table subscriptions add column cancel_at_period_end boolean not null default false;
+
+-- Écriture permise : essai en cours, abonné, ou paiement en échec (délai de grâce).
+create or replace function public.company_can_write()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from subscriptions s
+    where s.company_id = current_company_id()
+      and (s.status in ('active', 'past_due') or (s.status = 'trialing' and s.trial_ends_at > now()))
+  )
+$$;
+
+-- Offre de lancement : 50 places, jamais rendues (un abonné qui part ne libère pas sa place).
+create or replace function public.launch_seats_left()
+returns integer language sql stable security definer set search_path = public as $$
+  select greatest(0, 50 - (select count(*) from subscriptions where launch_offer)::int)
+$$;
+grant execute on function public.launch_seats_left() to anon, authenticated;
+
+-- Appelée par le webhook Stripe (clé service) : réserve une place, en série (verrou).
+create or replace function public.claim_launch_seat(p_company_id uuid)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare taken int;
+begin
+  perform pg_advisory_xact_lock(4242);
+  if exists (select 1 from subscriptions where company_id = p_company_id and launch_offer) then return true; end if;
+  select count(*) into taken from subscriptions where launch_offer;
+  if taken >= 50 then return false; end if;
+  update subscriptions set launch_offer = true where company_id = p_company_id;
+  return true;
+end $$;
+revoke all on function public.claim_launch_seat(uuid) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Invitations
+-- ---------------------------------------------------------------------------
+create table invitations (
+  id           uuid primary key default gen_random_uuid(),
+  company_id   uuid not null references companies(id) on delete cascade,
+  email        text not null,
+  access_role  text not null default 'technicien' check (access_role in ('admin', 'technicien')),
+  token        text not null unique default encode(gen_random_bytes(24), 'hex'),
+  invited_by   uuid references auth.users(id) on delete set null,
+  created_at   timestamptz not null default now(),
+  expires_at   timestamptz not null default (now() + interval '14 days'),
+  accepted_at  timestamptz
+);
+create unique index invitations_pending_email on invitations (company_id, lower(email)) where accepted_at is null;
+alter table invitations enable row level security;
+create policy invitations_admin on invitations for all
+  using (company_id = current_company_id() and current_is_admin())
+  with check (company_id = current_company_id() and current_is_admin());
+
+-- Aperçu d'une invitation (page publique d'acceptation) : entreprise et e-mail invités seulement.
+create or replace function public.invitation_preview(p_token text)
+returns table (company_name text, email text, access_role text, expired boolean, accepted boolean)
+language sql stable security definer set search_path = public as $$
+  select c.legal_name, i.email, i.access_role, i.expires_at < now(), i.accepted_at is not null
+  from invitations i join companies c on c.id = i.company_id where i.token = p_token
+$$;
+grant execute on function public.invitation_preview(text) to anon, authenticated;
+
+create or replace function public.accept_invitation(p_token text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  inv invitations;
+  user_email text;
+begin
+  if auth.uid() is null then raise exception 'Non authentifié'; end if;
+  select * into inv from invitations where token = p_token for update;
+  if inv.id is null then raise exception 'Invitation introuvable'; end if;
+  if inv.accepted_at is not null then raise exception 'Invitation déjà utilisée'; end if;
+  if inv.expires_at < now() then raise exception 'Invitation expirée'; end if;
+  select email into user_email from auth.users where id = auth.uid();
+  if lower(user_email) <> lower(inv.email) then raise exception 'Cette invitation est destinée à %', inv.email; end if;
+  if exists (select 1 from profiles where id = auth.uid()) then raise exception 'Ce compte est déjà rattaché à une entreprise'; end if;
+  insert into profiles (id, company_id, role, access_role, email) values (auth.uid(), inv.company_id, 'member', inv.access_role, user_email);
+  update invitations set accepted_at = now() where id = inv.id;
+  return inv.company_id;
+end $$;
+revoke all on function public.accept_invitation(text) from public, anon;
+grant execute on function public.accept_invitation(text) to authenticated;
+
+-- Gestion des membres par un administrateur (jamais le titulaire du compte)
+create or replace function public.set_member_role(p_user_id uuid, p_role text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not current_is_admin() then raise exception 'Réservé aux administrateurs'; end if;
+  if p_role not in ('admin', 'technicien') then raise exception 'Rôle invalide'; end if;
+  update profiles set access_role = p_role
+  where id = p_user_id and company_id = current_company_id() and role <> 'owner';
+  if not found then raise exception 'Membre introuvable (le titulaire du compte reste administrateur)'; end if;
+end $$;
+
+create or replace function public.remove_member(p_user_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not current_is_admin() then raise exception 'Réservé aux administrateurs'; end if;
+  delete from profiles where id = p_user_id and company_id = current_company_id() and role <> 'owner' and id <> auth.uid();
+  if not found then raise exception 'Membre introuvable (impossible de retirer le titulaire ou soi-même)'; end if;
+end $$;
+revoke all on function public.set_member_role(uuid, text) from public, anon;
+revoke all on function public.remove_member(uuid) from public, anon;
+grant execute on function public.set_member_role(uuid, text) to authenticated;
+grant execute on function public.remove_member(uuid) to authenticated;
+
+-- Le titulaire est administrateur, avec son e-mail
+create or replace function public.create_company_for_current_user(p_legal_name text, p_full_name text default null)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  cid uuid;
+  user_email text;
+begin
+  if auth.uid() is null then raise exception 'Non authentifié'; end if;
+  select company_id into cid from profiles where id = auth.uid();
+  if cid is not null then return cid; end if;
+  select email into user_email from auth.users where id = auth.uid();
+  insert into companies (legal_name, email) values (coalesce(nullif(trim(p_legal_name), ''), 'Mon entreprise'), user_email) returning id into cid;
+  insert into profiles (id, company_id, full_name, role, access_role, email) values (auth.uid(), cid, p_full_name, 'owner', 'admin', user_email);
+  insert into subscriptions (company_id) values (cid);
+  insert into settings_coefficients (company_id, sizing, labor_days) values (cid, default_sizing_coefficients(), default_labor_days());
+  perform seed_example_catalog(cid);
+  perform seed_example_accessories_v2(cid);
+  return cid;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- RLS : administrateurs pour les paramètres et le catalogue, lecture seule hors abonnement
+-- ---------------------------------------------------------------------------
+drop policy companies_update on companies;
+create policy companies_update on companies for update
+  using (id = current_company_id() and current_is_admin())
+  with check (id = current_company_id() and current_is_admin());
+
+-- Catalogue et réglages : lecture pour tous les membres, écriture pour les administrateurs
+do $$
+declare t text;
+begin
+  foreach t in array array['settings_coefficients', 'brands', 'products', 'accessories', 'suppliers'] loop
+    execute format('drop policy %1$s_all on %1$s', t);
+    execute format('create policy %1$s_select on %1$s for select using (company_id = current_company_id())', t);
+    execute format('create policy %1$s_write on %1$s for all using (company_id = current_company_id() and current_is_admin()) with check (company_id = current_company_id() and current_is_admin())', t);
+  end loop;
+end $$;
+drop policy catalog_imports_insert on catalog_imports;
+create policy catalog_imports_insert on catalog_imports for insert with check (company_id = current_company_id() and current_is_admin());
+
+-- Devis, clients, chantiers : tous les membres, mais pas d'écriture en lecture seule
+do $$
+declare t text;
+begin
+  foreach t in array array['clients', 'projects', 'rooms', 'quotes', 'quote_lines'] loop
+    execute format('drop policy %1$s_all on %1$s', t);
+    execute format('create policy %1$s_select on %1$s for select using (company_id = current_company_id())', t);
+    execute format('create policy %1$s_insert on %1$s for insert with check (company_id = current_company_id() and company_can_write())', t);
+    execute format('create policy %1$s_update on %1$s for update using (company_id = current_company_id() and company_can_write()) with check (company_id = current_company_id() and company_can_write())', t);
+    execute format('create policy %1$s_delete on %1$s for delete using (company_id = current_company_id() and company_can_write())', t);
+  end loop;
+end $$;
+
+-- Logos et tampons : lisibles par tous les membres (PDF), modifiables par les administrateurs
+drop policy company_assets_rw on storage.objects;
+create policy company_assets_read on storage.objects for select
+  using (bucket_id = 'company-assets' and (storage.foldername(name))[1] = current_company_id()::text);
+create policy company_assets_write on storage.objects for insert
+  with check (bucket_id = 'company-assets' and (storage.foldername(name))[1] = current_company_id()::text and current_is_admin());
+create policy company_assets_update on storage.objects for update
+  using (bucket_id = 'company-assets' and (storage.foldername(name))[1] = current_company_id()::text and current_is_admin());
+create policy company_assets_delete on storage.objects for delete
+  using (bucket_id = 'company-assets' and (storage.foldername(name))[1] = current_company_id()::text and current_is_admin());
+
+-- >>>>> 20261114000009_margin_isolation.sql
+-- =============================================================================
+-- Cloisonnement des marges EN BASE : un technicien sans l'option « voir les
+-- marges » ne peut lire AUCUN prix d'achat, remise ou marge, même via l'API.
+--
+-- Tables concernées (lecture réservée aux membres autorisés) :
+--   brands (remise), products (remise), accessories (remise, prix d'achat),
+--   price_history, suppliers, catalog_imports, quote_lines (prix d'achat),
+--   quote_financials (marge nette du devis, sortie de la table quotes).
+-- Les calculs qui ont besoin des coûts sont faits côté serveur (clé service,
+-- filtrée par entreprise) et seuls des résultats nettoyés partent au navigateur.
+-- =============================================================================
+
+create or replace function public.current_can_see_margins()
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select p.access_role = 'admin' or c.technicians_see_margins
+    from profiles p join companies c on c.id = p.company_id
+    where p.id = auth.uid()
+  ), false)
+$$;
+
+-- Marge nette des devis : table dédiée (la table quotes reste lisible par tous les membres)
+create table quote_financials (
+  quote_id         uuid primary key references quotes(id) on delete cascade,
+  company_id       uuid not null references companies(id) on delete cascade,
+  net_margin_cents bigint not null default 0,
+  updated_at       timestamptz not null default now()
+);
+insert into quote_financials (quote_id, company_id, net_margin_cents)
+select id, company_id, net_margin_cents from quotes;
+alter table quotes drop column net_margin_cents;
+
+alter table quote_financials enable row level security;
+create policy quote_financials_select on quote_financials for select
+  using (company_id = current_company_id() and current_can_see_margins());
+create policy quote_financials_write on quote_financials for all
+  using (company_id = current_company_id() and current_can_see_margins() and company_can_write())
+  with check (company_id = current_company_id() and current_can_see_margins() and company_can_write());
+
+-- Lecture des tables de coûts : membres autorisés seulement
+do $$
+declare t text;
+begin
+  foreach t in array array['brands', 'products', 'accessories', 'suppliers'] loop
+    execute format('drop policy %1$s_select on %1$s', t);
+    execute format('create policy %1$s_select on %1$s for select using (company_id = current_company_id() and current_can_see_margins())', t);
+  end loop;
+end $$;
+
+drop policy price_history_select on price_history;
+create policy price_history_select on price_history for select using (company_id = current_company_id() and current_can_see_margins());
+drop policy catalog_imports_select on catalog_imports;
+create policy catalog_imports_select on catalog_imports for select using (company_id = current_company_id() and current_can_see_margins());
+
+-- Lignes de devis : lecture, modification et suppression réservées aux membres autorisés.
+-- (Pour un technicien sans l'option, le serveur lit et écrit les lignes pour lui,
+-- après contrôle de l'entreprise et des droits, et ne lui renvoie que les prix de vente.)
+drop policy quote_lines_select on quote_lines;
+drop policy quote_lines_insert on quote_lines;
+drop policy quote_lines_update on quote_lines;
+drop policy quote_lines_delete on quote_lines;
+create policy quote_lines_select on quote_lines for select
+  using (company_id = current_company_id() and current_can_see_margins());
+create policy quote_lines_insert on quote_lines for insert
+  with check (company_id = current_company_id() and current_can_see_margins() and company_can_write());
+create policy quote_lines_update on quote_lines for update
+  using (company_id = current_company_id() and current_can_see_margins() and company_can_write())
+  with check (company_id = current_company_id() and current_can_see_margins() and company_can_write());
+create policy quote_lines_delete on quote_lines for delete
+  using (company_id = current_company_id() and current_can_see_margins() and company_can_write());
+
+-- Vues sans coûts, utilisables par tous les membres (prix de vente uniquement).
+-- Vues « definer » : elles filtrent elles-mêmes sur l'entreprise de l'utilisateur.
+create view quote_lines_public with (security_barrier) as
+  select id, company_id, quote_id, position, kind, origin, wizard_key, product_id, accessory_id, room_id,
+         designation, quantity, unit, unit_sale_cents, vat_rate
+  from quote_lines where company_id = current_company_id();
+
+create view catalog_products_public with (security_barrier) as
+  select p.id, p.company_id, p.brand_id, b.name as brand_name, p.range_name, p.reference, p.type,
+         p.cooling_kw, p.heating_kw, p.max_outlets, p.max_indoor_ratio, p.link_diameters,
+         p.precharged_length_m, p.extra_charge_g_per_m, p.is_example, p.active,
+         round(p.public_price_cents * b.sale_coefficient)::bigint as sale_price_cents
+  from products p join brands b on b.id = p.brand_id
+  where p.company_id = current_company_id();
+
+create view catalog_accessories_public with (security_barrier) as
+  select a.id, a.company_id, a.reference, a.category, a.name, a.diameter, a.unit, a.auto_role, a.is_example, a.active,
+         case
+           when a.public_price_cents is null then round(coalesce(a.purchase_price_cents, 0) * c.accessory_purchase_coefficient)::bigint
+           else greatest(round(a.public_price_cents * c.accessory_sale_coefficient),
+                         round(round(a.public_price_cents * (1 - a.discount_rate)) * c.accessory_purchase_coefficient))::bigint
+         end as sale_price_cents
+  from accessories a join companies c on c.id = a.company_id
+  where a.company_id = current_company_id();
+
+revoke all on quote_lines_public, catalog_products_public, catalog_accessories_public from anon;
+grant select on quote_lines_public, catalog_products_public, catalog_accessories_public to authenticated;
+
+-- ATTENTION pour les migrations futures : toute nouvelle colonne de `companies` doit être
+-- ajoutée explicitement par « grant select (colonne) on companies to authenticated ».
+--
+-- Le coefficient plancher sur achat des accessoires permettrait de retrouver un prix
+-- d'achat (vente ÷ coefficient) : colonne illisible via l'API, servie seulement aux
+-- membres autorisés par une fonction.
+do $$
+declare cols text;
+begin
+  select string_agg(quote_ident(column_name), ', ') into cols
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'companies' and column_name <> 'accessory_purchase_coefficient';
+  execute 'revoke select on public.companies from authenticated, anon';
+  execute format('grant select (%s) on public.companies to authenticated', cols);
+end $$;
+
+create or replace function public.company_accessory_purchase_coefficient()
+returns numeric language sql stable security definer set search_path = public as $$
+  select case when current_can_see_margins() then accessory_purchase_coefficient end
+  from companies where id = current_company_id()
+$$;
+grant execute on function public.company_accessory_purchase_coefficient() to authenticated;

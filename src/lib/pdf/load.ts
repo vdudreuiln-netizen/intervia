@@ -16,10 +16,11 @@ async function image(supabase: SupabaseClient, path: string | null): Promise<Pdf
 }
 
 /** Assemble le document imprimable d'un devis (sans aucune donnée de marge). */
-export async function loadQuoteDocument(supabase: SupabaseClient, company: CurrentCompany, quoteId: string): Promise<{ doc: QuoteDocument; logo: PdfImage; stamp: PdfImage } | null> {
+/** `costDb` : lecteur des coûts filtré par entreprise (src/lib/security/costs.ts). Le document final ne contient aucun coût. */
+export async function loadQuoteDocument(supabase: SupabaseClient, costDb: SupabaseClient, company: CurrentCompany, quoteId: string): Promise<{ doc: QuoteDocument; logo: PdfImage; stamp: PdfImage } | null> {
   const q = await loadQuote(supabase, quoteId);
   if (!q) return null;
-  const lines = await loadQuoteLines(supabase, quoteId);
+  const lines = await loadQuoteLines(costDb, company.id, quoteId);
   const result = computeQuote({
     lines,
     laborDays: q.laborDays,

@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Choice, Field, LinkButton, MoneyField, Notice, Select } from "@/components/ui";
 import { centsToInput, decimalToInput, formatEuros, formatPercent, parseDecimal, parseEuros, parsePercent } from "@/lib/format";
-import { computeQuote, maxDiscount, type PricingSettings, type QuoteDiscount, type PricedLine } from "@/lib/pricing/engine";
+import { computeQuote, maxDiscount, type PricingSettings, type QuoteAlert, type QuoteDiscount, type PricedLine } from "@/lib/pricing/engine";
 import type { FreeLineForm } from "@/lib/quote/edits";
 import type { QuoteLineRow } from "@/lib/quote/load";
 import { addFreeLine, deleteLine, dismissPriceNotices, roundQuote, setDiscount, setQuoteCoefficients, updateLine, type DocumentOptions } from "../../actions";
@@ -27,6 +27,9 @@ interface Props {
   companyDepositRate: number;
   priceNotices?: WizardState["priceNotices"];
   showMargin: boolean;
+  /** Technicien sans accès aux marges : alertes et lignes sous le coût calculées par le serveur. */
+  serverAlerts?: QuoteAlert[] | null;
+  belowCostIds?: string[] | null;
 }
 
 const VAT_OPTIONS = [
@@ -35,13 +38,15 @@ const VAT_OPTIONS = [
   { value: "0.2", label: "TVA 20 %" },
 ];
 
-export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate, priceNotices, showMargin }: Props) {
+export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate, priceNotices, showMargin, serverAlerts, belowCostIds }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
   const input = { lines: rows, laborDays, discount, settings };
   const result = useMemo(() => computeQuote(input), [rows, laborDays, discount, settings]); // eslint-disable-line react-hooks/exhaustive-deps
-  const max = useMemo(() => maxDiscount(input), [rows, laborDays, settings]); // eslint-disable-line react-hooks/exhaustive-deps
+  const max = useMemo(() => (showMargin ? maxDiscount(input) : null), [rows, laborDays, settings, showMargin]); // eslint-disable-line react-hooks/exhaustive-deps
+  const alerts = serverAlerts ?? result.alerts;
+  const belowCost = new Set(belowCostIds ?? result.lines.filter((l) => l.belowCost).map((l) => l.id));
   const assujetti = settings.vatRegime === "assujetti";
 
   const run = (fn: () => Promise<{ ok: boolean; message?: string }>, success?: string) =>
@@ -61,11 +66,11 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
               <li key={i} className={n.kind === "override_kept" ? "font-semibold text-danger" : ""}>
                 {n.kind === "updated" ? (
                   <>
-                    {n.designation} : {formatEuros(n.fromCents)} → <strong>{formatEuros(n.toCents)}</strong>
+                    {n.designation} : {formatEuros(n.fromCents ?? 0)} → <strong>{formatEuros(n.toCents ?? 0)}</strong>
                   </>
                 ) : (
                   <>
-                    ⚠ {n.designation} : prix d&apos;achat {formatEuros(n.fromCents)} → {formatEuros(n.toCents)}, votre prix retouché de {formatEuros(n.keptSaleCents ?? 0)} est conservé : vérifiez la marge.
+                    ⚠ {n.designation} : le prix d&apos;achat a changé depuis le devis d&apos;origine ; votre prix retouché de {formatEuros(n.keptSaleCents ?? 0)} est conservé : vérifiez la marge de cette ligne.
                   </>
                 )}
               </li>
@@ -76,18 +81,18 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
           </Button>
         </Card>
       )}
-      {result.alerts.map((a) => (
+      {alerts.map((a) => (
         <Notice key={a.message} tone="danger">
           ⚠ {a.message}
         </Notice>
       ))}
-      {showMargin && <MarginPanel result={result} laborDays={laborDays} maxDiscount={max} />}
+      {showMargin && max && <MarginPanel result={result} laborDays={laborDays} maxDiscount={max} />}
       {flash && <Notice tone={flash.ok ? "ok" : "danger"}>{flash.text}</Notice>}
 
       <Card title="Lignes du devis">
         <ul className="divide-y-2 divide-slate-200">
           {result.lines.map((l) => (
-            <LineItem key={l.id} line={l} row={rows.find((r) => r.id === l.id)!} assujetti={assujetti} pending={pending} run={run} quoteId={quoteId} showMargin={showMargin} />
+            <LineItem key={l.id} line={{ ...l, belowCost: belowCost.has(l.id) }} row={rows.find((r) => r.id === l.id)!} assujetti={assujetti} pending={pending} run={run} quoteId={quoteId} showMargin={showMargin} />
           ))}
         </ul>
         <Totals result={result} />
@@ -213,12 +218,12 @@ function Rounding({ pending, onRound }: { pending: boolean; onRound: () => void 
   );
 }
 
-function DiscountForm({ discount, max, grossHt, pending, onApply }: { discount: QuoteDiscount | null; max: { cents: number; rate: number }; grossHt: number; pending: boolean; onApply: (d: QuoteDiscount | null) => void }) {
+function DiscountForm({ discount, max, grossHt, pending, onApply }: { discount: QuoteDiscount | null; max: { cents: number; rate: number } | null; grossHt: number; pending: boolean; onApply: (d: QuoteDiscount | null) => void }) {
   const [kind, setKind] = useState<QuoteDiscount["kind"]>(discount?.kind ?? "amount");
   const [value, setValue] = useState(discount ? (discount.kind === "amount" ? centsToInput(discount.value) : decimalToInput(Math.round(discount.value * 10000) / 100)) : "");
   const parsed = kind === "amount" ? parseEuros(value) : parsePercent(value);
   const asCents = parsed === null ? null : kind === "amount" ? parsed : Math.round(grossHt * parsed);
-  const over = asCents !== null && asCents > max.cents;
+  const over = max !== null && asCents !== null && asCents > max.cents;
   return (
     <Card title="Remise commerciale">
       <p className="text-base text-slate-700">Affichée au client sur le PDF, sur une ligne « Remise commerciale ».</p>
@@ -232,7 +237,7 @@ function DiscountForm({ discount, max, grossHt, pending, onApply }: { discount: 
         ]}
       />
       <Field label={kind === "amount" ? "Remise" : "Remise"} value={value} onChange={setValue} inputMode="decimal" suffix={kind === "amount" ? "€" : "%"} error={value && parsed === null ? "Valeur invalide" : undefined} />
-      {over && <Notice tone="danger">Au-delà de la remise maximale ({formatEuros(max.cents, { decimals: false })} HT, {formatPercent(max.rate)}) : le devis passera en alerte.</Notice>}
+      {over && max && <Notice tone="danger">Au-delà de la remise maximale ({formatEuros(max.cents, { decimals: false })} HT, {formatPercent(max.rate)}) : le devis passera en alerte.</Notice>}
       <div className="flex flex-col gap-3 sm:flex-row">
         <Button type="button" full disabled={pending || parsed === null || parsed <= 0} onClick={() => onApply({ kind, value: parsed! })}>
           Appliquer la remise

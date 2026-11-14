@@ -225,7 +225,7 @@ export interface TravelSettings {
   pricePerKmCents: number;
   /** Minimum facturé par aller-retour (sans stationnement). */
   minimumFeeCents: number;
-  /** Minimum par jour « déplacement + stationnement » quand le stationnement est activé (ex. 60 €). */
+  /** Minimum par jour « déplacement + stationnement » quand le stationnement est activé. */
   minimumDailyWithParkingCents: number;
 }
 
@@ -236,7 +236,7 @@ export interface TravelInput {
   sameCommune: boolean;
   /** Nombre d'allers-retours = jours de chantier (un demi-jour compte pour un). */
   trips: number;
-  /** Stationnement payant, activé chantier par chantier (ex. Bordeaux : 40 €/jour). */
+  /** Stationnement payant, activé chantier par chantier (montant par jour). */
   parking: { enabled: boolean; perDayCents: number };
 }
 

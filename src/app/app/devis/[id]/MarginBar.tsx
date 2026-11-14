@@ -6,7 +6,7 @@ import type { QuoteResult } from "@/lib/pricing/engine";
 /** Bandeau « Ma marge » (version compacte, le panneau complet arrive à l'étape suivante). */
 export function MarginBar({ result, vatRegime, showMargin = true }: { result: QuoteResult | null; vatRegime: "franchise" | "assujetti"; showMargin?: boolean }) {
   if (!result) return null;
-  const alert = result.alerts.length > 0;
+  const alert = showMargin && result.alerts.length > 0;
   const perDay = result.margin.marginPerDayCents;
   return (
     <div className={`sticky bottom-16 z-10 -mx-4 border-t-4 px-4 py-3 ${alert ? "border-danger bg-danger-light" : "border-ok bg-ok-light"}`} role="status" aria-live="polite">

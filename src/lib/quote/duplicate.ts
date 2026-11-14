@@ -36,7 +36,7 @@ export function priceNotices(before: ComparableLine[], after: ComparableLine[], 
     const overridden = edits?.overrides[l.wizardKey]?.unitSaleCents !== undefined;
     if (overridden) {
       if (o.unitPurchaseCents !== l.unitPurchaseCents) {
-        out.push({ designation: l.designation, kind: "override_kept", fromCents: o.unitPurchaseCents, toCents: l.unitPurchaseCents, keptSaleCents: l.unitSaleCents });
+        out.push({ designation: l.designation, kind: "override_kept", keptSaleCents: l.unitSaleCents });
       }
     } else if (o.unitSaleCents !== l.unitSaleCents) {
       out.push({ designation: l.designation, kind: "updated", fromCents: o.unitSaleCents, toCents: l.unitSaleCents });

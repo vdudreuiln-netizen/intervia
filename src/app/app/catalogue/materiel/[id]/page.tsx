@@ -12,9 +12,9 @@ export const metadata: Metadata = { title: "Produit" };
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase , role } = await getCurrentCompany();
+  const { supabase, role, company } = await getCurrentCompany();
   if (role !== "admin") redirect("/app");
-  const brands = await loadBrands(supabase);
+  const brands = await loadBrands(supabase, company.id);
   const isNew = id === "nouveau";
   let initial = productToForm();
   let history: Awaited<ReturnType<typeof loadPriceHistory>> = [];

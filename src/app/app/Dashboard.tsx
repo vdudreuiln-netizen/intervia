@@ -6,13 +6,14 @@ import { useRouter } from "next/navigation";
 import { Button, Card, Choice, Field, LinkButton, Notice } from "@/components/ui";
 import { formatEuros, formatPercent } from "@/lib/format";
 import { dashboard, followUpMessage, monthLabel, needsFollowUp, type QuoteStatus, type QuoteSummary } from "@/lib/dashboard/stats";
-import { duplicateQuote, recordFollowUp } from "./devis/actions";
+import { deleteDraftQuote, duplicateQuote, recordFollowUp } from "./devis/actions";
 
 export interface DashboardQuote extends QuoteSummary {
   number: string;
   totalTtcCents: number;
   issueDate: string;
   followUpCount: number;
+  demo?: boolean;
   client: { name: string; phone: string | null; email: string | null };
 }
 
@@ -158,7 +159,10 @@ function QuoteCard({ quote: x, late, vatRegime, company, showMargin }: { quote: 
           <p className="text-lg font-bold">
             {x.number} · {x.client.name}
           </p>
-          <span className={`shrink-0 rounded-md px-2 py-1 text-sm font-bold ${s.cls}`}>{s.label}</span>
+          <span className="flex shrink-0 flex-col items-end gap-1">
+            <span className={`rounded-md px-2 py-1 text-sm font-bold ${s.cls}`}>{s.label}</span>
+            {x.demo && <span className="rounded-md bg-amber-200 px-2 py-1 text-xs font-bold text-amber-900">DÉMONSTRATION</span>}
+          </span>
         </div>
         <p className="text-base text-slate-700">
           {done ? (
@@ -187,6 +191,23 @@ function QuoteCard({ quote: x, late, vatRegime, company, showMargin }: { quote: 
         <Button type="button" variant="secondary" onClick={() => setDup(!dup)}>
           Dupliquer
         </Button>
+        {x.status === "brouillon" && (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={pending}
+            onClick={() =>
+              confirm(`Supprimer le brouillon ${x.number} ?`) &&
+              start(async () => {
+                const r = await deleteDraftQuote(x.id);
+                setMsg({ ok: r.ok, text: r.message ?? "" });
+                if (r.ok) router.refresh();
+              })
+            }
+          >
+            Supprimer
+          </Button>
+        )}
       </div>
       {dup && <DuplicateForm quoteId={x.id} clientName={x.client.name} onDone={(t) => setMsg(t)} />}
       {msg && (

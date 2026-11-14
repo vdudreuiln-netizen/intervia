@@ -10,7 +10,7 @@ import { checkMultiSplit } from "@/lib/sizing/sizing";
 import type { Coefficients } from "@/lib/sizing/coefficients";
 import { calcContext, proposalInput, type CompanyPricing, type SiteInfo } from "@/lib/quote/context";
 import { fromSelection, toSelection } from "@/lib/quote/equipment";
-import { priceEquipment, proposeConfigurations, type PricedOption } from "@/lib/quote/options";
+import { priceEquipment, proposeConfigurations, type ConfigProposal, type PricedOption } from "@/lib/quote/options";
 import { CONFIG_LABELS, OPTION_HINTS, OPTION_LABELS, type CatAccessory, type CatProduct, type Equipment, type RoomNeed, type WizardState } from "@/lib/quote/types";
 import { saveWizard } from "../../actions";
 import { MarginBar } from "../MarginBar";
@@ -25,16 +25,18 @@ interface Props {
   accessories: CatAccessory[];
   wizard: WizardState;
   showMargin?: boolean;
+  /** Propositions calculées par le serveur (technicien sans accès aux marges). */
+  serverProposals?: ConfigProposal[];
 }
 
 const kw = (n: number | null) => (n ? `${n.toLocaleString("fr-FR")} kW` : "");
 const sameEquipment = (a: Equipment | null, b: Equipment) => !!a && JSON.stringify(toSelection(a)) === JSON.stringify(toSelection(b));
 
-export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, accessories, wizard, showMargin = true }: Props) {
+export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, accessories, wizard, showMargin = true, serverProposals }: Props) {
   const router = useRouter();
   const ctx = useMemo(() => calcContext(company, site, coefs, wizard), [company, site, coefs, wizard]);
   const input = useMemo(() => proposalInput(ctx, company, coefs, rooms, products, accessories), [ctx, company, coefs, rooms, products, accessories]);
-  const proposals = useMemo(() => proposeConfigurations(input), [input]);
+  const proposals = useMemo(() => serverProposals ?? proposeConfigurations(input), [input, serverProposals]);
   const [selected, setSelected] = useState<Equipment | null>(() => (wizard.selection ? fromSelection(wizard.selection, products) : null));
   const priced = useMemo(() => (selected ? priceEquipment(selected, input) : null), [selected, input]);
   const [msg, setMsg] = useState<string | null>(null);

@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get("code");
   // destination interne uniquement (pas de redirection ouverte)
   const next = searchParams.get("next");
-  const safeNext = next && /^\/invitation\/[0-9a-f]{16,128}$/.test(next) ? next : "/app/bienvenue";
+  const safeNext = next && (/^\/invitation\/[0-9a-f]{16,128}$/.test(next) || next === "/nouveau-mot-de-passe") ? next : "/app/bienvenue";
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);

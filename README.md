@@ -32,13 +32,19 @@ src/lib/quote/         assistant devis : choix du matériel, options, lignes, m�
 src/lib/billing/       formules, accès (essai / lecture seule), synchronisation Stripe
 src/lib/dashboard/     indicateurs du mois (heure de Paris), relances, message type
 src/lib/pdf/           modèle du devis imprimé (pur, testé) et rendu PDF (@react-pdf/renderer)
+src/lib/security/      accès aux données de coûts (cloisonnement des marges)
+src/lib/legal/         informations de l'éditeur pour les pages légales (À COMPLÉTER)
+src/lib/demo/          devis de démonstration créé à l'inscription
+supabase/emails-fr.md  modèles d'e-mails Supabase en français
 src/app/               écrans (connexion, onboarding /app/bienvenue, /app/parametres)
 ```
 
 ## Mise en route
 
-1. Créez un projet Supabase, puis exécutez dans l'éditeur SQL les fichiers de `supabase/migrations/` dans l'ordre
-   (ou `supabase db push` avec la CLI).
+**Guide pas à pas pour non-développeur : [MISE-EN-LIGNE.md](MISE-EN-LIGNE.md).**
+
+1. Créez un projet Supabase (région Paris), puis collez `supabase/climdevis-installation.sql` (toutes les
+   migrations regroupées, généré par `npm run sql:bundle`) dans l'éditeur SQL et exécutez-le.
 2. Dans Supabase › Authentication › URL Configuration, ajoutez `https://votre-domaine/auth/callback` aux URL de redirection.
 3. Copiez `.env.example` en `.env.local` et renseignez les clés.
 4. `npm install && npm run dev`, puis ouvrez http://localhost:3000.
@@ -58,7 +64,7 @@ Vérification de la RLS et de l'import sur un PostgreSQL local :
 
 ```bash
 createdb climdevis_test
-for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql; do
+for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql supabase/tests/50_margin_isolation_check.sql; do
   psql -d climdevis_test -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -132,9 +138,23 @@ Formules sans engagement (prix nets, éditeur en franchise de TVA) : Solo 49 €
   à la fin de l'essai. Fin d'essai ou abonnement inactif : **lecture seule garantie en base** (RLS
   `company_can_write()`), devis et PDF restent consultables.
 - Rôles : Administrateur (paramètres, catalogue, abonnement, marges) / Technicien (devis ; marges et prix
-  d'achat visibles seulement si l'administrateur l'autorise — masquage à l'écran).
+  d'achat visibles seulement si l'administrateur l'autorise).
+- **Cloisonnement des marges en base** : sans l'option, un technicien ne peut lire ni catalogue avec remises,
+  ni prix d'achat, ni historique, ni marge (RLS `current_can_see_margins()`, marge dans `quote_financials`,
+  coefficient sur achat illisible) ; vues `*_public` avec prix de vente seulement. Les calculs qui ont besoin
+  des coûts sont faits côté serveur (clé service, filtrée par entreprise) et seuls des résultats nettoyés
+  partent au navigateur (`src/lib/quote/sanitize.ts`).
 - Invitations par e-mail (Supabase Auth) avec lien de secours ; limite d'utilisateurs de la formule, passage
   à la formule supérieure proposé (au prorata).
+
+### Légal et commercial
+
+- Pages publiques : accueil, tarifs, mentions légales, CGV/CGU, confidentialité, accord de traitement (DPA).
+  Les informations de l'éditeur sont à compléter dans `src/lib/legal/editor.ts`.
+- Acceptation des CGV, de la politique de confidentialité et du DPA obligatoire à l'inscription
+  (version et date enregistrées sur le compte).
+- Hébergement UE : base Supabase en région Paris, fonctions Vercel en région Paris (`vercel.json`).
+- Nouvel inscrit : devis de démonstration prêt à ouvrir ; lien « Aide » permanent dans l'application.
 
 ### Mise en place Stripe
 

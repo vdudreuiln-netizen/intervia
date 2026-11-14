@@ -57,8 +57,8 @@ export async function fetchAll<T>(query: (from: number, to: number) => PromiseLi
   }
 }
 
-export async function loadBrands(supabase: SupabaseClient): Promise<BrandItem[]> {
-  const { data, error } = await supabase.from("brands").select("id, name, discount_rate, sale_coefficient, is_example, products(count)").order("name");
+export async function loadBrands(supabase: SupabaseClient, companyId: string): Promise<BrandItem[]> {
+  const { data, error } = await supabase.from("brands").select("id, name, discount_rate, sale_coefficient, is_example, products(count)").eq("company_id", companyId).order("name");
   if (error) throw new Error(error.message);
   return (data ?? []).map((b) => ({
     id: b.id,
@@ -72,11 +72,12 @@ export async function loadBrands(supabase: SupabaseClient): Promise<BrandItem[]>
 
 type RawProduct = Record<string, unknown> & { brands: { name: string; discount_rate: number; sale_coefficient: number } };
 
-export async function loadProducts(supabase: SupabaseClient): Promise<ProductItem[]> {
+export async function loadProducts(supabase: SupabaseClient, companyId: string): Promise<ProductItem[]> {
   const rows = await fetchAll<RawProduct>((from, to) =>
     supabase
       .from("products")
       .select("id, brand_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, public_price_cents, discount_rate, is_example, brands(name, discount_rate, sale_coefficient)")
+      .eq("company_id", companyId)
       .eq("active", true)
       .order("type")
       .order("cooling_kw")
@@ -111,11 +112,12 @@ export async function loadProducts(supabase: SupabaseClient): Promise<ProductIte
   });
 }
 
-export async function loadAccessories(supabase: SupabaseClient, companyCoefficient: number, purchaseCoefficient: number): Promise<AccessoryItem[]> {
+export async function loadAccessories(supabase: SupabaseClient, companyId: string, companyCoefficient: number, purchaseCoefficient: number): Promise<AccessoryItem[]> {
   const rows = await fetchAll<Record<string, unknown>>((from, to) =>
     supabase
       .from("accessories")
       .select("id, reference, category, name, diameter, unit, public_price_cents, purchase_price_cents, discount_rate, is_example")
+      .eq("company_id", companyId)
       .eq("active", true)
       .order("category")
       .order("name")

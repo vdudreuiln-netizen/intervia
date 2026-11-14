@@ -14,9 +14,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Link href="/app" className="truncate text-lg font-extrabold">
             {company.legal_name}
           </Link>
-          <form action={signOut}>
-            <button className="min-h-12 rounded-lg px-3 text-base font-bold underline underline-offset-4">Déconnexion</button>
-          </form>
+          <div className="flex items-center gap-1">
+            <Link href="/app/aide" className="flex min-h-12 items-center rounded-lg px-3 text-base font-bold underline underline-offset-4">
+              Aide
+            </Link>
+            <form action={signOut}>
+              <button className="min-h-12 rounded-lg px-3 text-base font-bold underline underline-offset-4">Déconnexion</button>
+            </form>
+          </div>
         </div>
       </header>
       {access.message && (access.mode !== "active" || access.message) && (

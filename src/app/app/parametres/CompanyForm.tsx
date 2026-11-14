@@ -148,14 +148,31 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brand
           </>
         )}
         <h3 className="pt-2 text-lg font-bold">Charges sociales</h3>
-        <p className="text-base text-slate-600">En % du chiffre d&apos;affaires HT. Micro-entrepreneur 2026 : 21,2 % sur les prestations, 12,3 % sur la vente de matériel. Vous pouvez y ajouter vos frais fixes pour une marge vraiment nette.</p>
-        <PercentField label="Sur la main d'œuvre" value={form.labor_charges_rate} onChange={set("labor_charges_rate")} error={e.labor_charges_rate} />
-        <PercentField label="Sur le matériel" value={form.material_charges_rate} onChange={set("material_charges_rate")} error={e.material_charges_rate} />
+        <p className="text-base text-slate-700">
+          Ce que vous reversez (URSSAF, impôts, frais fixes…) en % de ce que vous facturez HT. ClimDevis les déduit pour calculer votre marge réellement nette.
+        </p>
+        <details className="rounded-xl bg-slate-100 p-3 text-base">
+          <summary className="cursor-pointer font-bold">Comment trouver mes taux ?</summary>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>Micro-entrepreneur : 21,2 % sur la main d&apos;œuvre (prestations) et 12,3 % sur le matériel (vente), taux URSSAF 2026.</li>
+            <li>Vous pouvez ajouter quelques points pour vos frais fixes (assurances, véhicule, outillage) : la marge affichée sera plus prudente.</li>
+            <li>En société (SARL, SAS…) : demandez à votre comptable le pourcentage de charges à appliquer à votre chiffre d&apos;affaires.</li>
+          </ul>
+        </details>
+        <PercentField label="Sur la main d'œuvre" value={form.labor_charges_rate} onChange={set("labor_charges_rate")} error={e.labor_charges_rate} placeholder="ex. 21,2" />
+        <PercentField label="Sur le matériel" value={form.material_charges_rate} onChange={set("material_charges_rate")} error={e.material_charges_rate} placeholder="ex. 12,3" />
       </>
     ),
     main_oeuvre: (
       <>
-        <MoneyField label="Prix d'une journée de main d'œuvre (HT)" value={form.daily_labor_rate_cents} onChange={set("daily_labor_rate_cents")} error={e.daily_labor_rate_cents} hint="Ce que vous facturez au client pour une journée de pose" />
+        <MoneyField
+          label="Prix d'une journée de main d'œuvre (HT)"
+          value={form.daily_labor_rate_cents}
+          onChange={set("daily_labor_rate_cents")}
+          error={e.daily_labor_rate_cents}
+          placeholder="ex. 450"
+          hint="Ce que vous facturez au client pour une journée de pose (votre tarif habituel)"
+        />
         <Field
           label="Coefficient de vente des accessoires"
           value={form.accessory_sale_coefficient}
@@ -175,7 +192,14 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brand
           hint="Plancher : jamais vendu moins que achat × coefficient (2,00 : liaison achetée 8,40 € → au moins 16,80 €). Sert seul si l'accessoire n'a pas de prix public."
         />
         <p className="text-base text-slate-600">Le coefficient du matériel (prix public × coefficient) se règle par marque, dans le catalogue.</p>
-        <MoneyField label="Objectif de marge nette par jour de chantier" value={form.target_margin_per_day_cents} onChange={set("target_margin_per_day_cents")} error={e.target_margin_per_day_cents} hint="Une alerte rouge s'affiche si un devis passe en dessous" />
+        <MoneyField
+          label="Objectif de marge nette par jour de chantier"
+          value={form.target_margin_per_day_cents}
+          onChange={set("target_margin_per_day_cents")}
+          error={e.target_margin_per_day_cents}
+          placeholder="ex. 300"
+          hint="Ce qui doit vous rester par jour de chantier une fois le matériel payé et les charges déduites. Une alerte rouge s'affiche si un devis passe en dessous."
+        />
         <PercentField label="Acompte demandé" value={form.deposit_rate} onChange={set("deposit_rate")} error={e.deposit_rate} hint="30 % par défaut, modifiable sur chaque devis. Devis signé chez le client : payable 7 jours après la signature (art. L221-10)." />
         <Field label="Validité des devis" value={form.quote_validity_days} onChange={set("quote_validity_days")} error={e.quote_validity_days} inputMode="numeric" suffix="jours" />
         <Field
@@ -256,16 +280,24 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brand
           <Field label="Ville" value={form.base_city} onChange={set("base_city")} error={e.base_city} />
         </div>
         {form.base_address && !form.base_lat && <Notice>Adresse non localisée : choisissez une suggestion pour activer le calcul automatique des distances.</Notice>}
-        <MoneyField label="Prix au km" value={form.travel_price_per_km_cents} onChange={set("travel_price_per_km_cents")} error={e.travel_price_per_km_cents} hint="Appliqué aux km aller + retour, un aller-retour par jour de chantier" />
+        <MoneyField
+          label="Prix au km"
+          value={form.travel_price_per_km_cents}
+          onChange={set("travel_price_per_km_cents")}
+          error={e.travel_price_per_km_cents}
+          placeholder="ex. 0,50"
+          hint="Appliqué aux km aller + retour, un aller-retour par jour de chantier. Mettez 0 si vous ne facturez pas le déplacement."
+        />
         <MoneyField label="Minimum par aller-retour" value={form.travel_minimum_fee_cents} onChange={set("travel_minimum_fee_cents")} error={e.travel_minimum_fee_cents} />
         <h3 className="pt-2 text-lg font-bold">Stationnement (activable par chantier)</h3>
-        <MoneyField label="Stationnement par jour proposé" value={form.parking_per_day_cents} onChange={set("parking_per_day_cents")} error={e.parking_per_day_cents} hint="Ex. centre de Bordeaux : 40 €. Modifiable sur chaque chantier." />
+        <MoneyField label="Stationnement par jour proposé" value={form.parking_per_day_cents} onChange={set("parking_per_day_cents")} error={e.parking_per_day_cents} placeholder="ex. 25" hint="Pour les chantiers en centre-ville avec stationnement payant. Modifiable sur chaque chantier." />
         <MoneyField
           label="Minimum par jour déplacement + stationnement"
           value={form.travel_min_daily_with_parking_cents}
           onChange={set("travel_min_daily_with_parking_cents")}
           error={e.travel_min_daily_with_parking_cents}
-          hint="Ex. 60 € : s'applique seulement quand le stationnement est activé"
+          placeholder="ex. 50"
+          hint="Facultatif : montant minimum facturé par jour quand le stationnement est activé (0 = aucun)"
         />
         <p className="text-base text-slate-600">Aucun frais de déplacement n&apos;est facturé quand le chantier est dans votre commune.</p>
       </>

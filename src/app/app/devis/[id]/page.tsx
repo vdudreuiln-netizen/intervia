@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getCurrentCompany } from "@/lib/company/current";
+import { costAccess } from "@/lib/security/costs";
+import { calcContext, proposalInput } from "@/lib/quote/context";
+import { proposeConfigurations } from "@/lib/quote/options";
+import { sanitizeAccessory, sanitizeProduct, sanitizeProposals } from "@/lib/quote/sanitize";
 import { centsToInput, decimalToInput } from "@/lib/format";
 import { fromSelection } from "@/lib/quote/equipment";
 import { companyPricing, loadCoefficients, loadQuote, loadQuoteLines, loadWizardCatalog, siteInfo } from "@/lib/quote/load";
@@ -19,7 +22,7 @@ export const metadata: Metadata = { title: "Devis" };
 
 export default async function QuoteWizardPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ etape?: string }> }) {
   const [{ id }, { etape }] = await Promise.all([params, searchParams]);
-  const { supabase, company, canSeeMargins } = await getCurrentCompany();
+  const { supabase, db, companyId, company, canSeeMargins, restricted } = await costAccess();
   const q = await loadQuote(supabase, id);
   if (!q) notFound();
 
@@ -30,7 +33,9 @@ export default async function QuoteWizardPage({ params, searchParams }: { params
   const step = requested;
 
   const coefs = await loadCoefficients(supabase);
-  const pricing = companyPricing(company);
+  const fullPricing = companyPricing(company);
+  // Navigateur d'un technicien sans accès aux marges : pas de coefficient sur achat (inutile : prix figés).
+  const pricing = restricted ? { ...fullPricing, accessory_purchase_coefficient: 0 } : fullPricing;
   const site = siteInfo(q);
   const rooms = toRoomNeeds(q.rooms);
   const roomForms: RoomForm[] = q.rooms.map((r) => ({
@@ -81,14 +86,21 @@ export default async function QuoteWizardPage({ params, searchParams }: { params
   } else if (step === 3) {
     body = <SizingStep quoteId={id} rooms={roomForms} gainableAccess={q.project.gainable_access} sizing={coefs.sizing} />;
   } else {
-    const catalog = await loadWizardCatalog(supabase);
+    const full = await loadWizardCatalog(db, companyId);
+    // Technicien sans accès aux marges : propositions calculées ici avec les coûts,
+    // navigateur alimenté uniquement en prix de vente.
+    const lineSettings = calcContext(fullPricing, site, coefs, q.wizard).lineSettings;
+    const catalog = restricted
+      ? { products: full.products.map(sanitizeProduct), accessories: full.accessories.map((a) => sanitizeAccessory(a, lineSettings)) }
+      : full;
     if (step === 4) {
-      body = <SolutionsStep quoteId={id} company={pricing} site={site} coefs={coefs} rooms={rooms} products={catalog.products} accessories={catalog.accessories} wizard={q.wizard} showMargin={canSeeMargins} />;
+      const serverProposals = restricted ? sanitizeProposals(proposeConfigurations(proposalInput(calcContext(fullPricing, site, coefs, q.wizard), fullPricing, coefs, rooms, full.products, full.accessories))) : undefined;
+      body = <SolutionsStep quoteId={id} company={pricing} site={site} coefs={coefs} rooms={rooms} products={catalog.products} accessories={catalog.accessories} wizard={q.wizard} showMargin={canSeeMargins} serverProposals={serverProposals} />;
     } else {
       const equipment = fromSelection(q.wizard.selection!, catalog.products);
       if (!equipment) redirect(`/app/devis/${id}?etape=4`);
       const props = { quoteId: id, company: pricing, site, coefs, rooms, equipment, accessories: catalog.accessories, wizard: q.wizard, showMargin: canSeeMargins };
-      const manual = step === 6 ? (await loadQuoteLines(supabase, id)).filter((l) => l.origin === "manual").length : 0;
+      const manual = step === 6 ? (await loadQuoteLines(db, companyId, id)).filter((l) => l.origin === "manual").length : 0;
       body = step === 5 ? <MetreStep {...props} /> : <LaborStep {...props} hasEdits={hasEdits(q.wizard.edits, manual)} />;
     }
   }

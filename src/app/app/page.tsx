@@ -10,17 +10,24 @@ export default async function AppHome() {
   const rows = await fetchAll<Row>((from, to) =>
     supabase
       .from("quotes")
-      .select("id, number, status, total_ht_cents, total_ttc_cents, net_margin_cents, issue_date, created_at, sent_at, decided_at, last_follow_up_at, follow_up_count, projects(clients(name, phone, email))")
+      .select("id, number, status, total_ht_cents, total_ttc_cents, notes, issue_date, created_at, sent_at, decided_at, last_follow_up_at, follow_up_count, projects(clients(name, phone, email))")
       .order("created_at", { ascending: false })
       .range(from, to) as never,
   );
+  // Marges : table protégée, lue seulement par les membres autorisés
+  const margins = new Map<string, number>();
+  if (canSeeMargins) {
+    const fin = await fetchAll<{ quote_id: string; net_margin_cents: number }>((from, to) => supabase.from("quote_financials").select("quote_id, net_margin_cents").range(from, to) as never);
+    for (const f of fin) margins.set(f.quote_id, Number(f.net_margin_cents));
+  }
   const quotes: DashboardQuote[] = rows.map((q) => ({
     id: q.id as string,
     number: q.number as string,
     status: q.status as DashboardQuote["status"],
     totalHtCents: Number(q.total_ht_cents),
     totalTtcCents: Number(q.total_ttc_cents),
-    netMarginCents: Number(q.net_margin_cents),
+    netMarginCents: margins.get(q.id as string) ?? 0,
+    demo: typeof q.notes === "string" && (q.notes as string).startsWith("Devis de démonstration"),
     issueDate: q.issue_date as string,
     createdAt: q.created_at as string,
     sentAt: (q.sent_at as string | null) ?? null,

@@ -1,6 +1,7 @@
 "use server";
 
 import { readOnlyError } from "@/lib/billing/guard";
+import { costAccess } from "@/lib/security/costs";
 
 import { revalidatePath } from "next/cache";
 import { getCurrentCompany } from "@/lib/company/current";
@@ -18,6 +19,16 @@ import { buildLines, enabledLines, proposeDays } from "@/lib/quote/lines";
 import { companyPricing, loadCoefficients, loadQuote, loadQuoteLines, loadWizardCatalog, siteInfo } from "@/lib/quote/load";
 import { parseRooms, toRoomNeeds, type RoomForm } from "@/lib/quote/rooms";
 import { EMPTY_EDITS, EMPTY_METRE, type WizardState } from "@/lib/quote/types";
+
+/** Lecteur des données de coûts (voir src/lib/security/costs.ts), toujours filtré sur l'entreprise. */
+async function costDb() {
+  const a = await costAccess();
+  return { db: a.db, companyId: a.companyId };
+}
+async function linesOf(quoteId: string) {
+  const { db, companyId } = await costDb();
+  return loadQuoteLines(db, companyId, quoteId);
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FAIL = "Enregistrement impossible. Réessayez.";
@@ -138,7 +149,7 @@ export async function finalizeQuote(quoteId: string, mode: "keep" | "recalc" = "
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
   if (!q.wizard.selection) return { ok: false, message: "Choisissez d'abord une solution (étape 4)." };
-  const [catalog, coefs] = await Promise.all([loadWizardCatalog(supabase), loadCoefficients(supabase)]);
+  const [catalog, coefs] = await Promise.all([loadWizardCatalog((await costDb()).db, company.id), loadCoefficients(supabase)]);
   const equipment = fromSelection(q.wizard.selection, catalog.products);
   if (!equipment) return { ok: false, message: "Un produit choisi n'existe plus dans le catalogue : refaites le choix à l'étape 4." };
 
@@ -154,9 +165,10 @@ export async function finalizeQuote(quoteId: string, mode: "keep" | "recalc" = "
     wizard.edits,
   );
 
-  const existing = await loadQuoteLines(supabase, quoteId);
+  const existing = await linesOf(quoteId);
   const manual = mode === "keep" ? existing.filter((l) => l.origin === "manual") : [];
-  const del = await supabase.from("quote_lines").delete().eq("quote_id", quoteId).in("origin", mode === "keep" ? ["wizard"] : ["wizard", "manual"]);
+  const { db } = await costDb();
+  const del = await db.from("quote_lines").delete().eq("company_id", company.id).eq("quote_id", quoteId).in("origin", mode === "keep" ? ["wizard"] : ["wizard", "manual"]);
   if (del.error) return { ok: false, message: FAIL };
 
   const rows = generated.map((l, i) => ({
@@ -176,11 +188,11 @@ export async function finalizeQuote(quoteId: string, mode: "keep" | "recalc" = "
     vat_rate: ctx.pricing.vatRegime === "franchise" ? 0 : l.vatRate,
   }));
   if (rows.length) {
-    const ins = await supabase.from("quote_lines").insert(rows);
+    const ins = await db.from("quote_lines").insert(rows);
     if (ins.error) return { ok: false, message: FAIL };
   }
   // lignes libres conservées : après les lignes générées
-  for (const [i, m] of manual.entries()) await supabase.from("quote_lines").update({ position: rows.length + i }).eq("id", m.id);
+  for (const [i, m] of manual.entries()) await db.from("quote_lines").update({ position: rows.length + i }).eq("company_id", company.id).eq("id", m.id);
 
   const upd = await supabase
     .from("quotes")
@@ -209,12 +221,18 @@ async function recomputeTotals(quoteId: string): Promise<{ ok: boolean; message?
   const { supabase, company } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
-  const lines = await loadQuoteLines(supabase, quoteId);
+  const lines = await linesOf(quoteId);
   const r = computeQuote({ lines, laborDays: q.laborDays, discount: q.discount, settings: pricingSettings(company, q.vatRegime) });
   const { error } = await supabase
     .from("quotes")
-    .update({ total_ht_cents: r.totalHtCents, total_ttc_cents: r.totalTtcCents, net_margin_cents: r.margin.netMarginCents, discount_cents: r.discountCents })
+    .update({ total_ht_cents: r.totalHtCents, total_ttc_cents: r.totalTtcCents, discount_cents: r.discountCents })
     .eq("id", quoteId);
+  // marge nette : table protégée (lisible seulement par les membres autorisés)
+  const { db } = await costDb();
+  const fin = await db
+    .from("quote_financials")
+    .upsert({ quote_id: quoteId, company_id: company.id, net_margin_cents: r.margin.netMarginCents, updated_at: new Date().toISOString() });
+  if (fin.error) return { ok: false, message: FAIL };
   revalidatePath(`/app/devis/${quoteId}/apercu`);
   revalidatePath("/app");
   return error ? { ok: false, message: FAIL } : { ok: true };
@@ -228,8 +246,9 @@ async function lineContext(quoteId: string, lineId: string) {
   const { supabase } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q || !UUID.test(lineId)) return null;
-  const line = (await loadQuoteLines(supabase, quoteId)).find((l) => l.id === lineId);
-  return line ? { supabase, q, line } : null;
+  const line = (await linesOf(quoteId)).find((l) => l.id === lineId);
+  const { db, companyId } = await costDb();
+  return line ? { supabase, q, line, db, companyId } : null;
 }
 
 /** Modifier le prix de vente (et la TVA) d'une ligne. */
@@ -240,7 +259,7 @@ export async function updateLine(quoteId: string, lineId: string, patch: { unitS
   if (!Number.isInteger(patch.unitSaleCents) || patch.unitSaleCents < 0 || patch.unitSaleCents > 100_000_000) return { ok: false, message: "Prix invalide." };
   const vat = c.q.vatRegime === "franchise" ? 0 : patch.vatRate ?? c.line.vatRate;
   if (c.q.vatRegime === "assujetti" && ![0.055, 0.1, 0.2].includes(vat)) return { ok: false, message: "TVA : 5,5 %, 10 % ou 20 %." };
-  const { error } = await c.supabase.from("quote_lines").update({ unit_sale_cents: patch.unitSaleCents, vat_rate: vat }).eq("id", lineId);
+  const { error } = await c.db.from("quote_lines").update({ unit_sale_cents: patch.unitSaleCents, vat_rate: vat }).eq("company_id", c.companyId).eq("id", lineId);
   if (error) return { ok: false, message: FAIL };
   if (c.line.origin === "wizard" && c.line.wizardKey) {
     const edits = recordOverride(c.q.wizard.edits, c.line.wizardKey, { unitSaleCents: patch.unitSaleCents, ...(c.q.vatRegime === "assujetti" ? { vatRate: vat } : {}) });
@@ -253,7 +272,7 @@ export async function deleteLine(quoteId: string, lineId: string): Promise<{ ok:
   { const g = await readOnlyError(); if (g) return g as never; }
   const c = await lineContext(quoteId, lineId);
   if (!c) return { ok: false, message: "Ligne introuvable." };
-  const { error } = await c.supabase.from("quote_lines").delete().eq("id", lineId);
+  const { error } = await c.db.from("quote_lines").delete().eq("company_id", c.companyId).eq("id", lineId);
   if (error) return { ok: false, message: FAIL };
   if (c.line.origin === "wizard" && c.line.wizardKey) {
     const edits = recordRemoval(c.q.wizard.edits, c.line.wizardKey);
@@ -270,8 +289,8 @@ export async function addFreeLine(quoteId: string, form: FreeLineForm): Promise<
   const parsed = parseFreeLine(form, q.vatRegime, { euros: parseEuros, decimal: parseDecimal, percent: parsePercent });
   if (!parsed.ok) return { ok: false, errors: parsed.errors, message: "Certains champs sont à corriger." };
   const v = parsed.values;
-  const count = (await loadQuoteLines(supabase, quoteId)).length;
-  const { error } = await supabase.from("quote_lines").insert({
+  const count = (await linesOf(quoteId)).length;
+  const { error } = await (await costDb()).db.from("quote_lines").insert({
     company_id: company.id,
     quote_id: quoteId,
     position: count,
@@ -306,7 +325,7 @@ export async function roundQuote(quoteId: string): Promise<{ ok: boolean; messag
   const { supabase, company } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
-  const lines = await loadQuoteLines(supabase, quoteId);
+  const lines = await linesOf(quoteId);
   const r = roundToPsychologicalPrice({ lines, laborDays: q.laborDays, discount: q.discount, settings: pricingSettings(company, q.vatRegime) });
   if (r.outcome === "unchanged") return { ok: true, message: r.reason };
 
@@ -314,9 +333,10 @@ export async function roundQuote(quoteId: string): Promise<{ ok: boolean; messag
   for (const after of r.lines) {
     const before = lines.find((l) => l.id === after.id)!;
     if (before.unitSaleCents === after.unitSaleCents && before.quantity === after.quantity && before.designation === after.designation) continue;
-    await supabase
+    await (await costDb()).db
       .from("quote_lines")
       .update({ unit_sale_cents: after.unitSaleCents, quantity: after.quantity, unit: after.unit, designation: after.designation, unit_purchase_cents: after.unitPurchaseCents })
+      .eq("company_id", company.id)
       .eq("id", after.id);
     if (before.origin === "wizard" && before.wizardKey) {
       wizard = { ...wizard, edits: recordOverride(wizard.edits, before.wizardKey, { unitSaleCents: after.unitSaleCents, quantity: after.quantity, unit: after.unit, designation: after.designation }) };
@@ -415,7 +435,7 @@ export async function duplicateQuote(sourceId: string, target: { mode: "same" | 
   const src = await loadQuote(supabase, sourceId);
   if (!src) return { ok: false, message: "Devis introuvable." };
   if (target.mode === "other" && !target.clientName?.trim()) return { ok: false, message: "Indiquez le nom du nouveau client." };
-  const srcLines = await loadQuoteLines(supabase, sourceId);
+  const srcLines = await linesOf(sourceId);
 
   // Client et chantier
   let clientId = src.project.client.id;
@@ -470,7 +490,7 @@ export async function duplicateQuote(sourceId: string, target: { mode: "same" | 
   // Lignes libres recopiées telles quelles
   const manual = srcLines.filter((l) => l.origin === "manual");
   if (manual.length) {
-    const { error } = await supabase.from("quote_lines").insert(
+    const { error } = await (await costDb()).db.from("quote_lines").insert(
       manual.map((l, i) => ({
         company_id: company.id,
         quote_id: copy.id,
@@ -494,7 +514,7 @@ export async function duplicateQuote(sourceId: string, target: { mode: "same" | 
   // Regénération avec le catalogue actuel, retouches conservées
   const f = await finalizeQuote(copy.id, "keep");
   if (!f.ok) return { ok: true, id: copy.id, next: `/app/devis/${copy.id}?etape=4`, message: f.message };
-  const after = await loadQuoteLines(supabase, copy.id);
+  const after = await linesOf(copy.id);
   const before = srcLines.map((l) => ({ ...l, wizardKey: l.wizardKey ? remapIds(l.wizardKey, idMap) : null }));
   const items = priceNotices(before, after, wizard.edits);
   if (items.length) await supabase.from("quotes").update({ wizard: { ...wizard, priceNotices: { sourceNumber: src.number, items } } }).eq("id", copy.id);
@@ -517,4 +537,23 @@ export async function recordFollowUp(quoteId: string): Promise<{ ok: boolean; me
   if (error) return { ok: false, message: FAIL };
   revalidatePath("/app");
   return { ok: true, message: "Relance notée ✔" };
+}
+
+/** Supprime un devis BROUILLON (et son chantier / client s'ils ne servent plus). */
+export async function deleteDraftQuote(quoteId: string): Promise<{ ok: boolean; message?: string }> {
+  { const g = await readOnlyError(); if (g) return g as never; }
+  const { supabase } = await getCurrentCompany();
+  const q = await loadQuote(supabase, quoteId);
+  if (!q) return { ok: false, message: "Devis introuvable." };
+  if (q.status !== "brouillon") return { ok: false, message: "Seuls les brouillons peuvent être supprimés (les devis envoyés restent dans l'historique)." };
+  const { error } = await supabase.from("quotes").delete().eq("id", quoteId);
+  if (error) return { ok: false, message: FAIL };
+  const { count: otherQuotes } = await supabase.from("quotes").select("id", { count: "exact", head: true }).eq("project_id", q.project.id);
+  if (!otherQuotes) {
+    await supabase.from("projects").delete().eq("id", q.project.id);
+    const { count: otherProjects } = await supabase.from("projects").select("id", { count: "exact", head: true }).eq("client_id", q.project.client.id);
+    if (!otherProjects) await supabase.from("clients").delete().eq("id", q.project.client.id);
+  }
+  revalidatePath("/app");
+  return { ok: true, message: "Devis supprimé." };
 }

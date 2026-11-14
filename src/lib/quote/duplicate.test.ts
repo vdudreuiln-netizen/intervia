@@ -33,7 +33,8 @@ describe("copie d'un devis", () => {
       [{ wizardKey: "liaison:i1", designation: "Liaison", unitSaleCents: 2000, unitPurchaseCents: 960 }],
       { overrides: { "liaison:i1": { unitSaleCents: 2000 } }, removed: [] },
     );
-    expect(n).toEqual([{ designation: "Liaison", kind: "override_kept", fromCents: 840, toCents: 960, keptSaleCents: 2000 }]);
+    // aucun prix d'achat stocké : l'état du devis est lisible par les techniciens
+    expect(n).toEqual([{ designation: "Liaison", kind: "override_kept", keptSaleCents: 2000 }]);
   });
 
   it("rien à signaler si les prix n'ont pas bougé", () => {

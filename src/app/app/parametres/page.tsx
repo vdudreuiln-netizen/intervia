@@ -13,7 +13,7 @@ export default async function ParametresPage() {
   const { supabase, company , role } = await getCurrentCompany();
   if (role !== "admin") redirect("/app");
   const { id, onboarding_done: _done, ...row } = company;
-  const [logoUrl, stampUrl, brands] = await Promise.all([signedAssetUrl(supabase, company.logo_path), signedAssetUrl(supabase, company.stamp_path), loadBrands(supabase)]);
+  const [logoUrl, stampUrl, brands] = await Promise.all([signedAssetUrl(supabase, company.logo_path), signedAssetUrl(supabase, company.stamp_path), loadBrands(supabase, company.id)]);
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-extrabold">Paramètres</h1>

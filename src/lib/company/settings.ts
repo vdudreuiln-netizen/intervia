@@ -136,7 +136,15 @@ const REQUIRED: Partial<Record<CompanyField, string>> = {
   insurance_policy: "Indiquez le numéro de contrat",
   insurance_coverage: "Indiquez la zone couverte (ex. France métropolitaine)",
   payment_terms: "Indiquez vos conditions de paiement",
+  labor_charges_rate: "Indiquez votre taux de charges sur la main d'œuvre (ex. 21,2)",
+  material_charges_rate: "Indiquez votre taux de charges sur le matériel (ex. 12,3)",
+  daily_labor_rate_cents: "Indiquez le prix d'une journée de main d'œuvre",
+  target_margin_per_day_cents: "Indiquez votre objectif de marge nette par jour",
+  travel_price_per_km_cents: "Indiquez votre prix au km (0 si vous ne facturez pas le déplacement)",
 };
+
+/** Valeurs propres à chaque artisan : jamais pré-remplies à l'onboarding. */
+export const PERSONAL_FIELDS: CompanyField[] = ["labor_charges_rate", "material_charges_rate", "daily_labor_rate_cents", "target_margin_per_day_cents", "travel_price_per_km_cents"];
 
 /** Valide et convertit les champs `fields` du formulaire. */
 export function parseCompanyForm(form: Partial<CompanyForm>, fields: CompanyField[]): ParseResult {

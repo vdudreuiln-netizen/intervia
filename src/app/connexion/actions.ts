@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { LEGAL_VERSION } from "@/lib/legal/editor";
 
 export interface AuthState {
   error?: string;
@@ -36,6 +37,8 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
   if (!legalName && !invitation) return { error: "Indiquez le nom de votre entreprise." };
   if (!email) return { error: "Indiquez votre e-mail." };
   if (password.length < 8) return { error: "Mot de passe trop court : 8 caractères minimum." };
+  if (formData.get("terms") !== "on") return { error: "Acceptez les conditions générales et la politique de confidentialité pour continuer." };
+  const terms = { terms_version: LEGAL_VERSION, terms_accepted_at: new Date().toISOString() };
 
   const origin = process.env.NEXT_PUBLIC_APP_URL ?? (await headers()).get("origin") ?? "";
   const supabase = await createClient();
@@ -43,7 +46,7 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
     email,
     password,
     options: {
-      data: invitation ? { invitation_token: invitation } : { legal_name: legalName },
+      data: invitation ? { invitation_token: invitation, ...terms } : { legal_name: legalName, ...terms },
       emailRedirectTo: `${origin}/auth/callback${invitation ? `?next=${encodeURIComponent(`/invitation/${invitation}`)}` : ""}`,
     },
   });
