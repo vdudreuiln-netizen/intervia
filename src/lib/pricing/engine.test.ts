@@ -3,6 +3,8 @@ import {
   computeQuote,
   computeTravelFee,
   effectiveDiscount,
+  effectiveSaleCoefficient,
+  materialSalePriceCents,
   FRANCHISE_MENTION,
   isPsychologicalPrice,
   psychologicalBounds,
@@ -146,32 +148,98 @@ describe("alertes", () => {
   });
 });
 
-describe("frais de déplacement", () => {
-  const s: TravelSettings = { pricePerKmCents: 50, minimumFeeCents: 3000, parkingEnabled: false, parkingPerDayCents: 1500 };
+describe("frais de déplacement et stationnement", () => {
+  const s: TravelSettings = { pricePerKmCents: 50, minimumFeeCents: 3000, minimumDailyWithParkingCents: 6000 };
+  const noParking = { enabled: false, perDayCents: 4000 };
+  const bordeaux = { enabled: true, perDayCents: 4000 };
 
-  it("aucun frais si le chantier est dans la commune de l'artisan", () => {
-    const f = computeTravelFee({ oneWayKm: 3, sameCommune: true, trips: 2, parkingDays: 2 }, s);
+  it("aucun frais de déplacement si le chantier est dans la commune de l'artisan", () => {
+    const f = computeTravelFee({ oneWayKm: 3, sameCommune: true, trips: 2, parking: noParking }, s);
     expect(f.applies).toBe(false);
     expect(f.totalCents).toBe(0);
   });
-  it("prix au km sur l'aller-retour, multiplié par le nombre de déplacements", () => {
-    // 42 km aller → 84 km A/R × 0,50 € = 42 € par déplacement, × 2
-    const f = computeTravelFee({ oneWayKm: 42, sameCommune: false, trips: 2, parkingDays: 0 }, s);
+  it("dans la commune, le stationnement activé reste facturé (sans minimum)", () => {
+    const f = computeTravelFee({ oneWayKm: 3, sameCommune: true, trips: 2, parking: bordeaux }, s);
+    expect(f.totalCents).toBe(8000);
+    expect(f.designation).toBe("Stationnement");
+  });
+  it("prix au km sur l'aller-retour, un aller-retour par jour", () => {
+    // 42 km aller → 84 km A/R × 0,50 € = 42 € par jour, × 2 jours
+    const f = computeTravelFee({ oneWayKm: 42, sameCommune: false, trips: 2, parking: noParking }, s);
     expect(f.perTripCents).toBe(4200);
     expect(f.totalCents).toBe(8400);
   });
-  it("applique le forfait minimum par déplacement", () => {
-    const f = computeTravelFee({ oneWayKm: 10, sameCommune: false, trips: 1, parkingDays: 0 }, s);
+  it("applique le forfait minimum par aller-retour", () => {
+    const f = computeTravelFee({ oneWayKm: 10, sameCommune: false, trips: 1, parking: noParking }, s);
     expect(f.perTripCents).toBe(3000); // 20 km × 0,50 = 10 € < 30 €
   });
-  it("ajoute le stationnement par jour si l'option est active", () => {
-    const f = computeTravelFee({ oneWayKm: 42, sameCommune: false, trips: 2, parkingDays: 2 }, { ...s, parkingEnabled: true });
-    expect(f.parkingCents).toBe(3000);
-    expect(f.totalCents).toBe(11400);
+  it("Bordeaux : stationnement 40 €/j avec minimum déplacement + stationnement de 60 €/j", () => {
+    // 10 € de km → minimum 30 € + 40 € de stationnement = 70 € > 60 €
+    const near = computeTravelFee({ oneWayKm: 10, sameCommune: false, trips: 2, parking: bordeaux }, { ...s, minimumFeeCents: 0 });
+    expect(near.perDayCents).toBe(6000); // 10 € + 40 € = 50 € → relevé à 60 €
+    expect(near.totalCents).toBe(12000);
+    const far = computeTravelFee({ oneWayKm: 42, sameCommune: false, trips: 2, parking: bordeaux }, s);
+    expect(far.perDayCents).toBe(8200); // 42 € + 40 € = 82 € > 60 €
+    expect(far.designation).toBe("Déplacement et stationnement");
   });
-  it("un demi-jour compte comme un déplacement entier", () => {
-    const f = computeTravelFee({ oneWayKm: 42, sameCommune: false, trips: 1.5, parkingDays: 0 }, s);
+  it("le minimum journalier avec stationnement ne s'applique pas sans stationnement", () => {
+    const f = computeTravelFee({ oneWayKm: 42, sameCommune: false, trips: 1, parking: noParking }, { ...s, minimumDailyWithParkingCents: 10000 });
+    expect(f.totalCents).toBe(4200);
+  });
+  it("un demi-jour compte comme un aller-retour entier", () => {
+    const f = computeTravelFee({ oneWayKm: 42, sameCommune: false, trips: 1.5, parking: noParking }, s);
     expect(f.totalCents).toBe(8400);
+  });
+});
+
+describe("coefficient de vente du matériel", () => {
+  it("1,00 = prix public par défaut", () => {
+    expect(effectiveSaleCoefficient(null, null)).toBe(1);
+    expect(materialSalePriceCents(109000, 1)).toBe(109000);
+  });
+  it("coefficient de la marque : 1,10 = prix public + 10 %", () => {
+    expect(materialSalePriceCents(109000, effectiveSaleCoefficient(1.1, null))).toBe(119900);
+  });
+  it("le coefficient du devis remplace celui de la marque", () => {
+    expect(effectiveSaleCoefficient(1.1, 1.05)).toBe(1.05);
+    expect(effectiveSaleCoefficient(1.1, 1)).toBe(1);
+  });
+  it("refuse un coefficient nul ou absurde", () => {
+    expect(() => effectiveSaleCoefficient(0, null)).toThrow(RangeError);
+    expect(() => effectiveSaleCoefficient(null, 12)).toThrow(RangeError);
+  });
+});
+
+describe("TVA selon le régime", () => {
+  it("assujetti : refuse un taux hors 5,5 / 10 / 20 %", () => {
+    const l = lines();
+    l[0] = { ...l[0]!, vatRate: 0.07 };
+    expect(() => computeQuote(quote(assujetti, l))).toThrow(RangeError);
+  });
+  it("franchise : les taux des lignes sont ignorés, TTC = HT", () => {
+    const l = lines();
+    l[0] = { ...l[0]!, vatRate: 0.07 };
+    const r = computeQuote(quote(franchise, l));
+    expect(r.totalTtcCents).toBe(r.totalHtCents);
+    expect(r.vat).toEqual([]);
+  });
+});
+
+describe("scénario compte de test (23 % MO, 16 % matériel, objectif 700 €/j)", () => {
+  const mine: PricingSettings = { vatRegime: "franchise", laborChargesRate: 0.23, materialChargesRate: 0.16, targetMarginPerDayCents: 70000 };
+  it("calcule la marge et alerte sous 700 €/j", () => {
+    const r = computeQuote(quote(mine));
+    // charges : 16 % × 1 600 € = 256 € ; 23 % × 940 € = 216,20 €
+    expect(r.margin.materialChargesCents).toBe(25600);
+    expect(r.margin.laborChargesCents).toBe(21620);
+    expect(r.margin.netMarginCents).toBe(254000 - 106000 - 25600 - 21620);
+    expect(r.margin.marginPerDayCents).toBe(50390);
+    expect(r.alerts.map((a) => a.code)).toEqual(["margin_below_target"]);
+  });
+  it("l'arrondi ne descend jamais sous l'objectif : il monte", () => {
+    const r = roundToPsychologicalPrice(quote(mine));
+    expect(r.outcome).toBe("rounded_up");
+    expect(r.result.totalTtcCents).toBe(259000);
   });
 });
 

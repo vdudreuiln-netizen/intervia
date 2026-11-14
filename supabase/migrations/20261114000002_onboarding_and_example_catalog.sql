@@ -22,10 +22,11 @@ begin
     values (p_company_id, b.name, b.discount, true)
     returning id into brand_id;
 
-    insert into products (company_id, brand_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, public_price_cents, is_example)
+    insert into products (company_id, brand_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, public_price_cents, is_example)
     select p_company_id, brand_id, p.range_name,
            upper(left(split_part(b.name, '– ', 2), 3)) || '-' || p.ref,
            p.type::product_type, p.cool, p.heat, p.outlets,
+           case when p.type = 'ue_multi' then 1.30 end,
            (round(p.price * b.price_factor / 10) * 10 * 100)::bigint,
            true
     from (values

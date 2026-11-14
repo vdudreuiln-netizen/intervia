@@ -100,6 +100,10 @@ export interface QuoteResult {
 
 export const FRANCHISE_MENTION = "TVA non applicable, art. 293 B du CGI";
 
+/** Taux proposés aux entreprises assujetties (10 % par défaut en rénovation). */
+export const ALLOWED_VAT_RATES: readonly number[] = [0.055, 0.1, 0.2];
+export const DEFAULT_VAT_RATE = 0.1;
+
 /** Arrondi au centime le plus proche (demi vers l'infini, symétrique). */
 export function roundCents(value: number): number {
   const r = Math.round(Math.abs(value) + Number.EPSILON * Math.abs(value));
@@ -126,55 +130,89 @@ export function purchasePriceCents(publicPriceCents: number, discount: number): 
 }
 
 // ---------------------------------------------------------------------------
-// Frais de déplacement
+// Prix de vente du matériel
+// ---------------------------------------------------------------------------
+
+/**
+ * Prix de vente unitaire HT du matériel = prix public × coefficient de vente.
+ * 1,00 = prix public ; 1,10 = prix public + 10 %.
+ * Le coefficient du devis (s'il est renseigné) remplace celui de la marque.
+ */
+export function effectiveSaleCoefficient(
+  brandCoefficient: number | null | undefined,
+  quoteCoefficient: number | null | undefined,
+): number {
+  const c = quoteCoefficient ?? brandCoefficient ?? 1;
+  if (!(c > 0) || c > 5) throw new RangeError(`Coefficient de vente invalide : ${c}`);
+  return c;
+}
+
+export function materialSalePriceCents(publicPriceCents: number, coefficient: number): number {
+  return roundCents(publicPriceCents * coefficient);
+}
+
+// ---------------------------------------------------------------------------
+// Frais de déplacement et stationnement
 // ---------------------------------------------------------------------------
 
 export interface TravelSettings {
   /** Prix facturé par km parcouru (aller + retour comptés). */
   pricePerKmCents: number;
-  /** Montant minimum facturé par déplacement. */
+  /** Minimum facturé par aller-retour (sans stationnement). */
   minimumFeeCents: number;
-  /** Stationnement facturé par jour, si l'option est activée. */
-  parkingEnabled: boolean;
-  parkingPerDayCents: number;
+  /** Minimum par jour « déplacement + stationnement » quand le stationnement est activé (ex. 60 €). */
+  minimumDailyWithParkingCents: number;
 }
 
 export interface TravelInput {
   /** Distance base → chantier, aller simple, en km. */
   oneWayKm: number;
-  /** Chantier dans la commune de l'artisan : pas de frais. */
+  /** Chantier dans la commune de l'artisan : pas de frais de déplacement. */
   sameCommune: boolean;
-  /** Nombre d'allers-retours facturés (par défaut : nombre de jours arrondi au supérieur). */
+  /** Nombre d'allers-retours = jours de chantier (un demi-jour compte pour un). */
   trips: number;
-  /** Jours de stationnement facturés. */
-  parkingDays: number;
+  /** Stationnement payant, activé chantier par chantier (ex. Bordeaux : 40 €/jour). */
+  parking: { enabled: boolean; perDayCents: number };
 }
 
 export interface TravelFee {
   applies: boolean;
   roundTripKm: number;
+  /** Déplacement facturé par jour (minimum appliqué), hors stationnement. */
   perTripCents: number;
-  parkingCents: number;
+  /** Total facturé par jour, stationnement et minimum journalier compris. */
+  perDayCents: number;
+  days: number;
   totalCents: number;
+  designation: string;
   detail: string;
 }
 
 export function computeTravelFee(input: TravelInput, s: TravelSettings): TravelFee {
+  const days = Math.max(0, Math.ceil(input.trips - 1e-9));
+  const parking = input.parking.enabled ? Math.max(0, input.parking.perDayCents) : 0;
+  const euros = (c: number) => (c / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
   if (input.sameCommune) {
-    return { applies: false, roundTripKm: 0, perTripCents: 0, parkingCents: 0, totalCents: 0, detail: "Chantier dans la commune : pas de frais de déplacement" };
+    // Pas de déplacement dans la commune ; le stationnement payant reste facturable.
+    const totalCents = parking * days;
+    return {
+      applies: totalCents > 0, roundTripKm: 0, perTripCents: 0, perDayCents: parking, days, totalCents,
+      designation: "Stationnement",
+      detail: totalCents > 0 ? `${days} j × ${euros(parking)}` : "Chantier dans la commune : pas de frais de déplacement",
+    };
   }
+
   const roundTripKm = Math.round(input.oneWayKm * 2 * 10) / 10;
   const perTripCents = Math.max(s.minimumFeeCents, roundCents(roundTripKm * s.pricePerKmCents));
-  const trips = Math.max(0, Math.ceil(input.trips));
-  const parkingCents = s.parkingEnabled ? roundCents(Math.max(0, input.parkingDays) * s.parkingPerDayCents) : 0;
-  const totalCents = perTripCents * trips + parkingCents;
-  const parts = [`${trips} aller-retour × ${formatKm(roundTripKm)} km`];
-  if (parkingCents > 0) parts.push(`stationnement ${input.parkingDays} j`);
-  return { applies: totalCents > 0, roundTripKm, perTripCents, parkingCents, totalCents, detail: parts.join(" + ") };
-}
-
-function formatKm(km: number): string {
-  return km.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+  const perDayCents = parking > 0 ? Math.max(perTripCents + parking, s.minimumDailyWithParkingCents) : perTripCents;
+  const totalCents = perDayCents * days;
+  const km = roundTripKm.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+  return {
+    applies: totalCents > 0, roundTripKm, perTripCents, perDayCents, days, totalCents,
+    designation: parking > 0 ? "Déplacement et stationnement" : "Frais de déplacement",
+    detail: `${days} j × ${euros(perDayCents)} (${km} km aller-retour${parking > 0 ? ` + stationnement ${euros(parking)}/j` : ""})`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +229,9 @@ export function computeQuote(input: QuoteInput): QuoteResult {
 
   const lines: PricedLine[] = input.lines.map((l) => {
     if (l.quantity < 0) throw new RangeError(`Quantité négative sur « ${l.designation} »`);
+    if (!franchise && !ALLOWED_VAT_RATES.includes(l.vatRate)) {
+      throw new RangeError(`Taux de TVA non autorisé sur « ${l.designation} » : ${l.vatRate}`);
+    }
     const totalSaleCents = roundCents(l.quantity * l.unitSaleCents);
     const totalPurchaseCents = roundCents(l.quantity * l.unitPurchaseCents);
     const rate = isMaterial(l.kind) ? settings.materialChargesRate : settings.laborChargesRate;

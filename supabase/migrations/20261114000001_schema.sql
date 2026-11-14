@@ -46,16 +46,13 @@ create table companies (
   -- TVA
   vat_regime            vat_regime not null default 'franchise',
   vat_number            text,
-  default_vat_rate      numeric(4,3) not null default 0.100 check (default_vat_rate in (0, 0.055, 0.1, 0.2)),
+  default_vat_rate      numeric(4,3) not null default 0.100 check (default_vat_rate in (0.055, 0.1, 0.2)),
   -- Charges sociales (en % du CA HT)
   labor_charges_rate    numeric(5,4) not null default 0.2120 check (labor_charges_rate between 0 and 1),
   material_charges_rate numeric(5,4) not null default 0.1230 check (material_charges_rate between 0 and 1),
   -- Main d'œuvre et marge
   daily_labor_rate_cents        bigint not null default 45000 check (daily_labor_rate_cents >= 0),
   target_margin_per_day_cents   bigint not null default 30000 check (target_margin_per_day_cents >= 0),
-  -- Prix de vente du matériel : 'public' (prix public) ou 'coefficient' (achat × coef)
-  material_pricing_mode text not null default 'public' check (material_pricing_mode in ('public', 'coefficient')),
-  material_coefficient  numeric(5,3) not null default 1.300 check (material_coefficient >= 1),
   -- Déplacement
   base_address          text,
   base_postal_code      text,
@@ -64,8 +61,10 @@ create table companies (
   base_lng              double precision,
   travel_price_per_km_cents   integer not null default 50 check (travel_price_per_km_cents >= 0),
   travel_minimum_fee_cents    integer not null default 3000 check (travel_minimum_fee_cents >= 0),
-  parking_enabled             boolean not null default false,
+  -- stationnement : activé chantier par chantier ; ici la valeur proposée par défaut
   parking_per_day_cents       integer not null default 0 check (parking_per_day_cents >= 0),
+  -- minimum par jour « déplacement + stationnement » quand le stationnement est activé
+  travel_min_daily_with_parking_cents integer not null default 0 check (travel_min_daily_with_parking_cents >= 0),
   -- Conditions des devis
   quote_validity_days   integer not null default 30 check (quote_validity_days > 0),
   payment_terms         text not null default 'Acompte de 30 % à la signature, solde à la fin des travaux.',
@@ -111,6 +110,8 @@ create table brands (
   company_id   uuid not null references companies(id) on delete cascade,
   name         text not null,
   discount_rate numeric(5,4) not null default 0 check (discount_rate >= 0 and discount_rate < 1),
+  -- prix de vente = prix public × coefficient (1,00 = prix public)
+  sale_coefficient numeric(4,3) not null default 1.000 check (sale_coefficient > 0 and sale_coefficient <= 5),
   is_example   boolean not null default false,
   created_at   timestamptz not null default now(),
   unique (company_id, name)
@@ -126,6 +127,8 @@ create table products (
   cooling_kw         numeric(5,2) check (cooling_kw is null or cooling_kw > 0),
   heating_kw         numeric(5,2) check (heating_kw is null or heating_kw > 0),
   max_outlets        smallint check (max_outlets is null or max_outlets between 1 and 8),
+  -- multi-split : Σ puissances intérieures / puissance extérieure maxi (doc fabricant, 1,30 par défaut)
+  max_indoor_ratio   numeric(4,2) check (max_indoor_ratio is null or max_indoor_ratio between 1 and 2),
   public_price_cents bigint not null check (public_price_cents >= 0),
   -- remise propre au produit : NULL = on prend celle de la marque
   discount_rate      numeric(5,4) check (discount_rate is null or (discount_rate >= 0 and discount_rate < 1)),
@@ -178,6 +181,8 @@ create table projects (
   site_lng       double precision,
   one_way_km     numeric(6,1),
   same_commune   boolean not null default false,
+  parking_enabled boolean not null default false,
+  parking_per_day_cents integer check (parking_per_day_cents is null or parking_per_day_cents >= 0),
   created_at     timestamptz not null default now()
 );
 create index on projects (company_id);
@@ -222,7 +227,8 @@ create table quotes (
   payment_terms    text,
   labor_days       numeric(4,1) not null default 0,
   travel_trips     numeric(4,1) not null default 0,
-  parking_days     numeric(4,1) not null default 0,
+  -- coefficient de vente propre au devis : remplace celui des marques s'il est renseigné
+  sale_coefficient numeric(4,3) check (sale_coefficient is null or (sale_coefficient > 0 and sale_coefficient <= 5)),
   notes            text,
   -- instantané du moteur de calcul (pour le tableau de bord)
   total_ht_cents   bigint not null default 0,

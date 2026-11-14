@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SIZING, proposeLaborDays, sizeRoom, unitFitsNeed, type RoomInput } from "./sizing";
+import { checkMultiSplit, DEFAULT_SIZING, proposeLaborDays, sizeRoom, unitFitsNeed, type RoomInput } from "./sizing";
 
 const salon: RoomInput = {
   name: "Salon",
@@ -59,5 +59,27 @@ describe("jours de main d'œuvre proposés", () => {
   });
   it("rien à poser : 0 jour", () => {
     expect(proposeLaborDays({ outdoorUnits: 0, indoorUnits: [], totalLinkMeters: 0 })).toBe(0);
+  });
+});
+
+describe("compatibilité multi-split", () => {
+  const m3 = { coolingKw: 6.8, maxOutlets: 3 };
+  it("accepte jusqu'à 130 % par défaut", () => {
+    // 3,5 + 2,5 + 2,5 = 8,5 kW / 6,8 = 125 %
+    expect(checkMultiSplit(m3, [3.5, 2.5, 2.5]).ok).toBe(true);
+  });
+  it("refuse au-delà de 130 %", () => {
+    // 3,5 × 3 = 10,5 kW / 6,8 = 154 %
+    const c = checkMultiSplit(m3, [3.5, 3.5, 3.5]);
+    expect(c.ok).toBe(false);
+    expect(c.problems[0]).toContain("max 130 %");
+  });
+  it("utilise le ratio propre au modèle (doc fabricant)", () => {
+    expect(checkMultiSplit({ ...m3, maxIndoorRatio: 1.6 }, [3.5, 3.5, 3.5]).ok).toBe(true);
+  });
+  it("refuse plus d'unités intérieures que de sorties", () => {
+    const c = checkMultiSplit(m3, [2, 2, 2, 2]);
+    expect(c.ok).toBe(false);
+    expect(c.problems[0]).toContain("3 sorties");
   });
 });

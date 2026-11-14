@@ -143,3 +143,36 @@ export function proposeLaborDays(inst: InstallationSummary, p: LaborDaysParams =
   const r = Math.ceil(raw / p.roundTo - 1e-9) * p.roundTo;
   return Math.max(p.roundTo, r);
 }
+
+// ---------------------------------------------------------------------------
+// Compatibilité multi-split
+// ---------------------------------------------------------------------------
+
+/** Ratio max Σ puissances intérieures / puissance extérieure si le modèle n'en précise pas. */
+export const DEFAULT_MAX_INDOOR_RATIO = 1.3;
+
+export interface MultiSplitCheck {
+  ok: boolean;
+  indoorTotalKw: number;
+  ratio: number;
+  maxRatio: number;
+  problems: string[];
+}
+
+export function checkMultiSplit(
+  outdoor: { coolingKw: number; maxOutlets: number; maxIndoorRatio?: number | null },
+  indoorKws: number[],
+): MultiSplitCheck {
+  const maxRatio = outdoor.maxIndoorRatio ?? DEFAULT_MAX_INDOOR_RATIO;
+  const indoorTotalKw = Math.round(indoorKws.reduce((a, k) => a + k, 0) * 100) / 100;
+  const ratio = indoorTotalKw / outdoor.coolingKw;
+  const problems: string[] = [];
+  if (indoorKws.length > outdoor.maxOutlets) {
+    problems.push(`${indoorKws.length} unités intérieures pour ${outdoor.maxOutlets} sorties maximum`);
+  }
+  if (ratio > maxRatio + 1e-9) {
+    const pct = (n: number) => Math.round(n * 100) + " %";
+    problems.push(`Puissance intérieure cumulée ${pct(ratio)} de l'unité extérieure (max ${pct(maxRatio)})`);
+  }
+  return { ok: problems.length === 0, indoorTotalKw, ratio, maxRatio, problems };
+}

@@ -1,4 +1,6 @@
-create role anon; create role authenticated; create role service_role bypassrls;
+do $$ begin create role anon; exception when duplicate_object then null; end $$;
+do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+do $$ begin create role service_role bypassrls; exception when duplicate_object then null; end $$;
 create schema auth; create schema storage;
 create table auth.users (id uuid primary key, email text);
 create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.uid', true), '')::uuid $$;
