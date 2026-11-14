@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeQuote,
+  catalogPrices,
   computeTravelFee,
   effectiveDiscount,
   effectiveSaleCoefficient,
@@ -207,6 +208,36 @@ describe("coefficient de vente du matériel", () => {
   it("refuse un coefficient nul ou absurde", () => {
     expect(() => effectiveSaleCoefficient(0, null)).toThrow(RangeError);
     expect(() => effectiveSaleCoefficient(null, 12)).toThrow(RangeError);
+  });
+});
+
+describe("prix catalogue (matériel et accessoires)", () => {
+  it("matériel : achat remisé, vente au prix public × coefficient de la marque", () => {
+    expect(catalogPrices({ kind: "material", publicPriceCents: 109000, brandDiscount: 0.35, productDiscount: null, brandCoefficient: 1.1 })).toEqual({
+      discount: 0.35,
+      purchaseCents: 70850,
+      saleCents: 119900,
+    });
+  });
+  it("matériel : remise produit et coefficient du devis prioritaires", () => {
+    const p = catalogPrices({ kind: "material", publicPriceCents: 100000, brandDiscount: 0.35, productDiscount: 0.42, brandCoefficient: 1.1, quoteCoefficient: 1 });
+    expect(p).toEqual({ discount: 0.42, purchaseCents: 58000, saleCents: 100000 });
+  });
+  it("accessoire : vente = achat × coefficient accessoires (1,30 par défaut)", () => {
+    // liaison 12 €/m public, remise 30 % → achat 8,40 € → vente 10,92 €
+    expect(catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: null })).toEqual({ discount: 0.3, purchaseCents: 840, saleCents: 1092 });
+    expect(catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: 1.3, quoteCoefficient: 1.5 }).saleCents).toBe(1260);
+  });
+  it("l'alerte sous le coût s'applique aussi aux accessoires", () => {
+    // coefficient 1,10 avec 16 % de charges : 9,24 € de vente ne couvrent pas 8,40 € d'achat + 1,48 € de charges
+    const acc = catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: 1.1 });
+    const r = computeQuote({
+      laborDays: 1,
+      settings: { ...franchise, materialChargesRate: 0.16 },
+      lines: [{ id: "lia", kind: "accessory", designation: "Liaison 1/4-3/8", quantity: 10, unit: "m", unitPurchaseCents: acc.purchaseCents, unitSaleCents: acc.saleCents, vatRate: 0.1 }],
+    });
+    expect(r.lines[0]!.belowCost).toBe(true);
+    expect(r.alerts.map((a) => a.code)).toContain("line_below_cost");
   });
 });
 

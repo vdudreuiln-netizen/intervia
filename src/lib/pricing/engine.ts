@@ -151,6 +151,36 @@ export function materialSalePriceCents(publicPriceCents: number, coefficient: nu
   return roundCents(publicPriceCents * coefficient);
 }
 
+/** Coefficient accessoires par défaut : prix de vente = prix d'achat × 1,30. */
+export const DEFAULT_ACCESSORY_COEFFICIENT = 1.3;
+
+export interface CatalogPrices {
+  discount: number;
+  purchaseCents: number;
+  saleCents: number;
+}
+
+/**
+ * Prix d'un article du catalogue, tels qu'ils seront repris dans un devis.
+ *  - matériel    : achat = public × (1 − remise) ; vente = PUBLIC × coefficient (marque ou devis)
+ *  - accessoire  : achat = public × (1 − remise) ; vente = ACHAT × coefficient accessoires (paramètres ou devis)
+ */
+export function catalogPrices(
+  item: { kind: "material"; publicPriceCents: number; brandDiscount: number | null; productDiscount: number | null; brandCoefficient: number | null; quoteCoefficient?: number | null }
+    | { kind: "accessory"; publicPriceCents: number; discount: number | null; companyCoefficient: number | null; quoteCoefficient?: number | null },
+): CatalogPrices {
+  if (item.kind === "material") {
+    const discount = effectiveDiscount(item.brandDiscount, item.productDiscount);
+    const purchaseCents = purchasePriceCents(item.publicPriceCents, discount);
+    const coef = effectiveSaleCoefficient(item.brandCoefficient, item.quoteCoefficient);
+    return { discount, purchaseCents, saleCents: materialSalePriceCents(item.publicPriceCents, coef) };
+  }
+  const discount = effectiveDiscount(null, item.discount);
+  const purchaseCents = purchasePriceCents(item.publicPriceCents, discount);
+  const coef = effectiveSaleCoefficient(item.companyCoefficient ?? DEFAULT_ACCESSORY_COEFFICIENT, item.quoteCoefficient);
+  return { discount, purchaseCents, saleCents: roundCents(purchaseCents * coef) };
+}
+
 // ---------------------------------------------------------------------------
 // Frais de déplacement et stationnement
 // ---------------------------------------------------------------------------

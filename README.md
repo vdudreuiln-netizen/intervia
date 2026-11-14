@@ -11,7 +11,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 |---|---|---|
 | 1 | Schéma de base + moteur de calcul + tests | ✅ |
 | 2 | Paramètres de l'entreprise (onboarding) + coefficients | ✅ |
-| 3 | Catalogue matériel (CSV, remises) | à faire |
+| 3 | Catalogue : import Excel/CSV, remises, coefficients, historique des prix | ✅ |
 | 4 | Assistant projet / devis (6 étapes) | à faire |
 | 5 | Panneau « Ma marge » + arrondi | à faire |
 | 6 | PDF du devis | à faire |
@@ -26,6 +26,7 @@ supabase/tests/        vérifications SQL de la RLS (Postgres + stubs Supabase)
 src/lib/pricing/       moteur de prix et de marge (UNIQUE endroit où l'on calcule de l'argent)
 src/lib/sizing/        dimensionnement W/m³, multi-split, jours de pose, coefficients modifiables
 src/lib/company/       paramètres entreprise : validation (SIRET, IBAN, TVA…), conversion formulaire ↔ base
+src/lib/catalog/       import de tarifs (CSV, xlsx), plan d'import, formulaires du catalogue
 src/lib/geo/           géocodage (Géoplateforme IGN) et détection « même commune »
 src/app/               écrans (connexion, onboarding /app/bienvenue, /app/parametres)
 ```
@@ -49,11 +50,11 @@ npm test          # tests unitaires (moteur de prix, dimensionnement)
 npm run typecheck
 ```
 
-Vérification de la RLS sur un PostgreSQL local :
+Vérification de la RLS et de l'import sur un PostgreSQL local :
 
 ```bash
 createdb climdevis_test
-for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql; do
+for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql; do
   psql -d climdevis_test -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -75,6 +76,10 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
 - Déplacement : un aller-retour par jour de chantier, max(minimum, km A/R × prix/km).
   Stationnement activable par chantier : par jour max(déplacement + stationnement, minimum journalier).
   Chantier dans la commune : pas de déplacement, seul le stationnement activé est facturé.
+- Accessoires : prix de vente = prix d'achat × coefficient accessoires (1,30 par défaut, réglable,
+  modifiable par devis) ; achat = prix public × (1 − remise).
+- Import de tarif : mise à jour par marque + référence (sans doublon), remise conservée si le fichier
+  n'en contient pas, historique daté de chaque changement de prix (trigger SQL), import tout-ou-rien.
 - Multi-split : Σ puissances intérieures ≤ 130 % de l'unité extérieure (modifiable par modèle).
 
 > Le dimensionnement W/m³ est un ordre de grandeur pour chiffrer, pas un bilan thermique réglementaire.

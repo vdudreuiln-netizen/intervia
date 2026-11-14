@@ -4,7 +4,7 @@
  * Utilisé côté client (messages immédiats) ET côté serveur (sécurité).
  */
 import { ALLOWED_VAT_RATES } from "@/lib/pricing/engine";
-import { centsToInput, parseDecimal, parseEuros, parsePercent, rateToInput } from "@/lib/format";
+import { centsToInput, decimalToInput, parseDecimal, parseEuros, parsePercent, rateToInput } from "@/lib/format";
 import {
   isValidBic,
   isValidEmail,
@@ -39,6 +39,7 @@ export interface CompanyRow {
   labor_charges_rate: number;
   material_charges_rate: number;
   daily_labor_rate_cents: number;
+  accessory_sale_coefficient: number;
   target_margin_per_day_cents: number;
   quote_validity_days: number;
   payment_terms: string;
@@ -64,7 +65,7 @@ export const STEPS: { id: StepId; title: string; fields: CompanyField[] }[] = [
   { id: "visuels", title: "Logo et tampon", fields: ["logo_path", "stamp_path"] },
   { id: "assurance", title: "Assurance et banque", fields: ["insurer_name", "insurance_policy", "insurance_coverage", "bank_holder", "iban", "bic"] },
   { id: "tva", title: "TVA et charges", fields: ["vat_regime", "vat_number", "default_vat_rate", "labor_charges_rate", "material_charges_rate"] },
-  { id: "main_oeuvre", title: "Main d'œuvre et marge", fields: ["daily_labor_rate_cents", "target_margin_per_day_cents", "quote_validity_days", "payment_terms"] },
+  { id: "main_oeuvre", title: "Prix, main d'œuvre et marge", fields: ["daily_labor_rate_cents", "accessory_sale_coefficient", "target_margin_per_day_cents", "quote_validity_days", "payment_terms"] },
   {
     id: "deplacement",
     title: "Déplacements",
@@ -88,6 +89,7 @@ export function companyRowToForm(row: CompanyRow): CompanyForm {
     const v = row[key];
     if (CENTS.includes(key)) form[key] = centsToInput(v as number);
     else if (RATES.includes(key)) form[key] = rateToInput(v as number);
+    else if (key === "accessory_sale_coefficient") form[key] = decimalToInput(Number(v));
     else form[key] = v === null || v === undefined ? "" : String(v);
   }
   return form;
@@ -194,6 +196,12 @@ export function parseCompanyForm(form: Partial<CompanyForm>, fields: CompanyFiel
         const c = parseEuros(raw === "" ? "0" : raw);
         if (c === null || c < 0) errors[k] = "Montant invalide";
         else set(k, c);
+        break;
+      }
+      case "accessory_sale_coefficient": {
+        const n = parseDecimal(raw === "" ? "1,3" : raw);
+        if (n === null || n <= 0 || n > 5) errors.accessory_sale_coefficient = "Coefficient entre 0,01 et 5 (ex. 1,30)";
+        else set("accessory_sale_coefficient", n);
         break;
       }
       case "quote_validity_days": {

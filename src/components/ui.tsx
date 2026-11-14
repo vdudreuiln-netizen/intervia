@@ -167,3 +167,47 @@ export function Notice({ tone = "info", children }: { tone?: "info" | "danger" |
   }[tone];
   return <div role={tone === "danger" ? "alert" : "status"} className={`rounded-xl border-2 p-4 text-base font-semibold ${cls}`}>{children}</div>;
 }
+
+export function Select({
+  label,
+  value,
+  onChange,
+  options,
+  error,
+  hint,
+  placeholder = "Choisir…",
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  error?: string;
+  hint?: string;
+  placeholder?: string;
+}) {
+  const id = useId();
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1 block text-base font-bold text-slate-900">
+        {label}
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-invalid={!!error}
+        className={`${inputBase} appearance-none bg-[length:1.5rem] bg-[right_0.75rem_center] bg-no-repeat pr-12 ${error ? "border-danger" : "border-slate-400"}`}
+        style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230B4F8A' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")" }}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {hint && !error && <p className="mt-1 text-sm text-slate-600">{hint}</p>}
+      {error && <p role="alert" className="mt-1 text-base font-bold text-danger">{error}</p>}
+    </div>
+  );
+}

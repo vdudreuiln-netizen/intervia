@@ -143,6 +143,16 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl }: Pro
     main_oeuvre: (
       <>
         <MoneyField label="Prix d'une journée de main d'œuvre (HT)" value={form.daily_labor_rate_cents} onChange={set("daily_labor_rate_cents")} error={e.daily_labor_rate_cents} hint="Ce que vous facturez au client pour une journée de pose" />
+        <Field
+          label="Coefficient de vente des accessoires"
+          value={form.accessory_sale_coefficient}
+          onChange={set("accessory_sale_coefficient")}
+          error={e.accessory_sale_coefficient}
+          inputMode="decimal"
+          suffix="×"
+          hint="Prix de vente = prix d'achat × coefficient (1,30 = achat + 30 %). Modifiable sur chaque devis."
+        />
+        <p className="text-base text-slate-600">Le coefficient du matériel (prix public × coefficient) se règle par marque, dans le catalogue.</p>
         <MoneyField label="Objectif de marge nette par jour de chantier" value={form.target_margin_per_day_cents} onChange={set("target_margin_per_day_cents")} error={e.target_margin_per_day_cents} hint="Une alerte rouge s'affiche si un devis passe en dessous" />
         <Field label="Validité des devis" value={form.quote_validity_days} onChange={set("quote_validity_days")} error={e.quote_validity_days} inputMode="numeric" suffix="jours" />
         <TextArea label="Conditions de paiement" value={form.payment_terms} onChange={set("payment_terms")} error={e.payment_terms} hint="Imprimées sur chaque devis" />
