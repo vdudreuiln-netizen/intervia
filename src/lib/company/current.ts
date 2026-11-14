@@ -1,0 +1,44 @@
+import "server-only";
+import { cache } from "react";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import type { CompanyRow } from "./settings";
+
+export interface CurrentCompany extends CompanyRow {
+  id: string;
+  onboarding_done: boolean;
+}
+
+const COLUMNS =
+  "id, onboarding_done, legal_name, siret, address_line, postal_code, city, phone, email, logo_path, stamp_path, " +
+  "insurer_name, insurance_policy, insurance_coverage, bank_holder, iban, bic, vat_regime, vat_number, default_vat_rate, " +
+  "labor_charges_rate, material_charges_rate, daily_labor_rate_cents, target_margin_per_day_cents, quote_validity_days, payment_terms, " +
+  "base_address, base_postal_code, base_city, base_citycode, base_lat, base_lng, travel_price_per_km_cents, travel_minimum_fee_cents, " +
+  "parking_per_day_cents, travel_min_daily_with_parking_cents";
+
+/**
+ * Utilisateur connecté + son entreprise. Crée l'entreprise au premier passage
+ * (essai 14 jours, coefficients par défaut, catalogue exemple).
+ * Mis en cache pour la durée d'une requête.
+ */
+export const getCurrentCompany = cache(async () => {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/connexion");
+
+  let { data: company } = await supabase.from("companies").select(COLUMNS).maybeSingle<CurrentCompany>();
+  if (!company) {
+    const legalName = (user.user_metadata?.legal_name as string | undefined) ?? "";
+    const { error } = await supabase.rpc("create_company_for_current_user", { p_legal_name: legalName });
+    if (error) throw new Error(`Création de l'entreprise impossible : ${error.message}`);
+    ({ data: company } = await supabase.from("companies").select(COLUMNS).single<CurrentCompany>());
+  }
+  if (!company) throw new Error("Entreprise introuvable");
+  // PostgREST renvoie les numeric en nombre ; on s'en assure pour les taux.
+  company.default_vat_rate = Number(company.default_vat_rate);
+  company.labor_charges_rate = Number(company.labor_charges_rate);
+  company.material_charges_rate = Number(company.material_charges_rate);
+  return { supabase, user, company };
+});

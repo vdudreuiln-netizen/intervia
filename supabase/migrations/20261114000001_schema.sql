@@ -57,6 +57,7 @@ create table companies (
   base_address          text,
   base_postal_code      text,
   base_city             text,
+  base_citycode         text,       -- code INSEE : détection « chantier dans la commune »
   base_lat              double precision,
   base_lng              double precision,
   travel_price_per_km_cents   integer not null default 50 check (travel_price_per_km_cents >= 0),
@@ -177,6 +178,7 @@ create table projects (
   site_address   text,
   site_postal_code text,
   site_city      text,
+  site_citycode  text,
   site_lat       double precision,
   site_lng       double precision,
   one_way_km     numeric(6,1),
