@@ -29,7 +29,7 @@ export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
 // Champs importables et correspondance des colonnes
 // ---------------------------------------------------------------------------
 
-export type MaterialField = "brand" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "public_price" | "discount";
+export type MaterialField = "brand" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "link_diameters" | "precharged_length_m" | "extra_charge_g_per_m" | "public_price" | "discount";
 export type AccessoryField = "reference" | "name" | "category" | "diameter" | "unit" | "public_price" | "discount";
 export type ImportField = MaterialField | AccessoryField;
 
@@ -51,6 +51,9 @@ export const FIELDS: Record<ImportTarget, FieldDef[]> = {
     { key: "cooling_kw", label: "Puissance froid (kW)", required: false, synonyms: ["puissance froid (kw)", "puissance froid", "froid", "p froid", "kw froid", "puissance frigorifique", "capacite froid"] },
     { key: "heating_kw", label: "Puissance chaud (kW)", required: false, synonyms: ["puissance chaud (kw)", "puissance chaud", "chaud", "p chaud", "kw chaud", "puissance calorifique", "capacite chaud"] },
     { key: "max_outlets", label: "Sorties max", required: false, synonyms: ["sorties max", "sorties", "nb sorties", "nombre de sorties", "nb ui", "unites interieures max"] },
+    { key: "link_diameters", label: "Diamètres liaisons", required: false, synonyms: ["diametres liaisons", "diametres", "diametre liaisons", "raccordements", "liaisons", "diametre liquide/gaz"] },
+    { key: "precharged_length_m", label: "Longueur pré-chargée (m)", required: false, synonyms: ["longueur prechargee (m)", "longueur prechargee", "longueur standard", "precharge", "longueur pre chargee"] },
+    { key: "extra_charge_g_per_m", label: "Charge complémentaire (g/m)", required: false, synonyms: ["charge complementaire (g/m)", "charge complementaire", "complement de charge", "charge additionnelle", "g/m"] },
     { key: "discount", label: "Remise (%)", required: false, hint: "Sinon : vos remises actuelles sont conservées", synonyms: ["remise (%)", "remise", "remise %", "discount", "taux de remise"] },
   ],
   accessoires: [
@@ -182,7 +185,7 @@ export function cellText(c: Cell): string {
 
 function cellNumber(c: Cell): number | null {
   if (typeof c === "number") return Number.isFinite(c) ? c : null;
-  const t = cellText(c).replace(/(kw|w|€|eur|ht|%)/gi, "").trim();
+  const t = cellText(c).replace(/(g\/m|kw|w|€|eur|ht|%|\s(m|ml)$)/gi, "").trim();
   return t === "" ? null : parseDecimal(t);
 }
 
@@ -265,6 +268,9 @@ export interface MaterialRow {
   cooling_kw: number | null;
   heating_kw: number | null;
   max_outlets: number | null;
+  link_diameters: string | null;
+  precharged_length_m: number | null;
+  extra_charge_g_per_m: number | null;
   public_price_cents: number;
   discount_rate: number | null; // null = non fourni par le fichier
 }
@@ -322,6 +328,9 @@ export function normalizeMaterialRows(rows: { line: number; cells: MappedRow }[]
     const type = cells.type !== undefined && cellText(cells.type) !== "" ? parseProductType(cells.type) : defaults.type ?? null;
     const discount = parseDiscount(cells.discount);
     const outletsN = cellNumber(cells.max_outlets);
+    const precharged = cellNumber(cells.precharged_length_m);
+    const gPerM = cellNumber(cells.extra_charge_g_per_m);
+    const dia = cellText(cells.link_diameters);
     const msgs: string[] = [];
     if (!reference) msgs.push("référence manquante");
     if (!brand) msgs.push("marque manquante");
@@ -329,6 +338,9 @@ export function normalizeMaterialRows(rows: { line: number; cells: MappedRow }[]
     if (!type) msgs.push(`type d'unité non reconnu (« ${cellText(cells.type)} »)`);
     if (discount === "invalid") msgs.push(`remise illisible (« ${cellText(cells.discount)} »)`);
     if (outletsN !== null && !(Number.isInteger(outletsN) && outletsN >= 1 && outletsN <= 8)) msgs.push("nombre de sorties entre 1 et 8");
+    if (precharged !== null && (precharged < 0 || precharged > 200)) msgs.push("longueur pré-chargée illisible");
+    if (gPerM !== null && (gPerM < 0 || gPerM > 500)) msgs.push("charge complémentaire illisible (g/m)");
+    if (dia && !/^\d+\/\d+"?\s*[-–/]\s*\d+\/\d+"?$/.test(dia)) msgs.push(`diamètres illisibles (« ${dia} », attendu 1/4 - 3/8)`);
     if (msgs.length) {
       errors.push({ line, message: msgs.join(", ") });
       continue;
@@ -342,6 +354,9 @@ export function normalizeMaterialRows(rows: { line: number; cells: MappedRow }[]
       cooling_kw: parseKw(cells.cooling_kw),
       heating_kw: parseKw(cells.heating_kw),
       max_outlets: outletsN,
+      link_diameters: dia ? dia.replace(/\s*[-–]\s*/, " - ") : null,
+      precharged_length_m: precharged,
+      extra_charge_g_per_m: gPerM === null ? null : Math.round(gPerM),
       public_price_cents: price!,
       discount_rate: discount as number | null,
     });
@@ -476,7 +491,7 @@ export function buildPlan(target: ImportTarget, rows: (MaterialRow | AccessoryRo
     if (row.discount_rate !== null) update.discount_rate = row.discount_rate;
     if (target === "materiel") {
       const m = row as MaterialRow;
-      for (const k of ["range_name", "cooling_kw", "heating_kw", "max_outlets"] as const) if (m[k] !== null) update[k] = m[k];
+      for (const k of ["range_name", "cooling_kw", "heating_kw", "max_outlets", "link_diameters", "precharged_length_m", "extra_charge_g_per_m"] as const) if (m[k] !== null) update[k] = m[k];
     } else {
       update.name = (row as AccessoryRow).name;
     }
@@ -504,11 +519,11 @@ export function templateCsv(target: ImportTarget): string {
   const rows =
     target === "materiel"
       ? [
-          ["Marque", "Gamme", "Référence", "Type", "Puissance froid (kW)", "Puissance chaud (kW)", "Sorties max", "Prix public HT", "Remise (%)"],
-          ["MaMarque", "Confort", "UE-35", "Unité extérieure mono-split", "3,5", "4,0", "1", "1090,00", "35"],
-          ["MaMarque", "Confort", "MU-35", "Murale", "3,5", "4,0", "", "540,00", ""],
-          ["MaMarque", "Multi", "M3-68", "Unité extérieure multi-split", "6,8", "8,6", "3", "2790,00", "35"],
-          ["MaMarque", "Pro", "GA-50", "Gainable", "5,0", "6,0", "", "1390,00", ""],
+          ["Marque", "Gamme", "Référence", "Type", "Puissance froid (kW)", "Puissance chaud (kW)", "Sorties max", "Diamètres liaisons", "Longueur pré-chargée (m)", "Charge complémentaire (g/m)", "Prix public HT", "Remise (%)"],
+          ["MaMarque", "Confort", "UE-35", "Unité extérieure mono-split", "3,5", "4,0", "1", "1/4 - 3/8", "7,5", "20", "1090,00", "35"],
+          ["MaMarque", "Confort", "MU-35", "Murale", "3,5", "4,0", "", "1/4 - 3/8", "", "", "540,00", ""],
+          ["MaMarque", "Multi", "M3-68", "Unité extérieure multi-split", "6,8", "8,6", "3", "", "30", "20", "2790,00", "35"],
+          ["MaMarque", "Pro", "GA-50", "Gainable", "5,0", "6,0", "", "1/4 - 1/2", "", "", "1390,00", ""],
         ]
       : [
           ["Référence", "Désignation", "Catégorie", "Diamètre", "Unité", "Prix public HT", "Remise (%)"],

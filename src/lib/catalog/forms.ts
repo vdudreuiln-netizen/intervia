@@ -132,7 +132,7 @@ export function parseProductForm(f: ProductForm): { ok: boolean; values: Product
 
 // --- Accessoires ---------------------------------------------------------------
 
-export type AccessoryFormKey = "reference" | "category" | "name" | "diameter" | "unit" | "public_price" | "discount" | "auto_role";
+export type AccessoryFormKey = "reference" | "category" | "name" | "diameter" | "unit" | "public_price" | "purchase_price" | "discount" | "auto_role";
 export type AccessoryForm = Record<AccessoryFormKey, string>;
 export interface AccessoryValues {
   reference: string | null;
@@ -140,7 +140,8 @@ export interface AccessoryValues {
   name: string;
   diameter: string | null;
   unit: string;
-  public_price_cents: number;
+  public_price_cents: number | null;
+  purchase_price_cents: number | null;
   discount_rate: number;
   auto_role: AutoRole | null;
 }
@@ -153,6 +154,7 @@ export function accessoryToForm(a?: Partial<AccessoryValues>): AccessoryForm {
     diameter: a?.diameter ?? "",
     unit: a?.unit ?? "u",
     public_price: centsToInput(a?.public_price_cents),
+    purchase_price: centsToInput(a?.purchase_price_cents),
     discount: rateToInput(a?.discount_rate ?? 0),
     auto_role: a?.auto_role ?? "",
   };
@@ -163,8 +165,11 @@ export function parseAccessoryForm(f: AccessoryForm): { ok: boolean; values: Acc
   if (!(f.category in ACCESSORY_CATEGORIES)) errors.category = "Choisissez la catégorie";
   if (!f.name.trim()) errors.name = "Indiquez la désignation";
   if (!(f.unit in ACCESSORY_UNITS)) errors.unit = "Choisissez l'unité";
-  const price = parseEuros(f.public_price);
-  if (price === null || price <= 0) errors.public_price = "Prix public HT invalide";
+  const hasPublic = f.public_price.trim() !== "";
+  const price = hasPublic ? parseEuros(f.public_price) : null;
+  const purchase = !hasPublic && f.purchase_price.trim() !== "" ? parseEuros(f.purchase_price) : null;
+  if (hasPublic && (price === null || price <= 0)) errors.public_price = "Prix public HT invalide";
+  if (!hasPublic && (purchase === null || purchase <= 0)) errors.public_price = "Indiquez le prix public HT, ou à défaut le prix d'achat";
   const discount = f.discount.trim() === "" ? 0 : parsePercent(f.discount);
   if (discount === null || discount < 0 || discount >= 1) errors.discount = "Remise entre 0 et 99 %";
   if (f.auto_role && !(f.auto_role in AUTO_ROLE_LABELS)) errors.auto_role = "Rôle inconnu";
@@ -179,8 +184,9 @@ export function parseAccessoryForm(f: AccessoryForm): { ok: boolean; values: Acc
       name: f.name.trim(),
       diameter: f.diameter.trim() || null,
       unit: f.unit,
-      public_price_cents: price ?? 0,
-      discount_rate: discount ?? 0,
+      public_price_cents: hasPublic ? price ?? 0 : null,
+      purchase_price_cents: hasPublic ? null : purchase,
+      discount_rate: hasPublic ? discount ?? 0 : 0,
     },
   };
 }

@@ -36,7 +36,8 @@ export interface AccessoryItem {
   name: string;
   diameter: string | null;
   unit: string;
-  public_price_cents: number;
+  public_price_cents: number | null;
+  purchase_price_cents: number | null;
   discount_rate: number;
   is_example: boolean;
   prices: CatalogPrices;
@@ -110,18 +111,19 @@ export async function loadProducts(supabase: SupabaseClient): Promise<ProductIte
   });
 }
 
-export async function loadAccessories(supabase: SupabaseClient, companyCoefficient: number): Promise<AccessoryItem[]> {
+export async function loadAccessories(supabase: SupabaseClient, companyCoefficient: number, purchaseCoefficient: number): Promise<AccessoryItem[]> {
   const rows = await fetchAll<Record<string, unknown>>((from, to) =>
     supabase
       .from("accessories")
-      .select("id, reference, category, name, diameter, unit, public_price_cents, discount_rate, is_example")
+      .select("id, reference, category, name, diameter, unit, public_price_cents, purchase_price_cents, discount_rate, is_example")
       .eq("active", true)
       .order("category")
       .order("name")
       .range(from, to) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
   );
   return rows.map((a) => {
-    const public_price_cents = Number(a.public_price_cents);
+    const public_price_cents = num(a.public_price_cents);
+    const purchase_price_cents = num(a.purchase_price_cents);
     const discount_rate = Number(a.discount_rate);
     return {
       id: a.id as string,
@@ -131,9 +133,10 @@ export async function loadAccessories(supabase: SupabaseClient, companyCoefficie
       diameter: (a.diameter as string | null) ?? null,
       unit: a.unit as string,
       public_price_cents,
+      purchase_price_cents,
       discount_rate,
       is_example: a.is_example as boolean,
-      prices: catalogPrices({ kind: "accessory", publicPriceCents: public_price_cents, discount: discount_rate, companyCoefficient }),
+      prices: catalogPrices({ kind: "accessory", publicPriceCents: public_price_cents, purchasePriceCents: purchase_price_cents, discount: discount_rate, companyCoefficient, purchaseCoefficient }),
     };
   });
 }

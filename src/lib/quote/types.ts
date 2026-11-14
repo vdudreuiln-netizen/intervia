@@ -86,7 +86,8 @@ export interface CatAccessory {
   name: string;
   diameter: string | null;
   unit: string;
-  publicPriceCents: number;
+  publicPriceCents: number | null;
+  purchasePriceCents: number | null;
   discount: number;
 }
 
@@ -133,7 +134,25 @@ export interface Metre {
 
 export const EMPTY_METRE: Metre = { linkM: {}, electricM: {}, ductMPerRoom: {}, toggles: {}, qty: {} };
 
+/** Retouche d'une ligne générée par l'assistant (clé stable de la ligne). */
+export interface LineOverride {
+  unitSaleCents?: number;
+  vatRate?: number;
+  quantity?: number;
+  unit?: string;
+  designation?: string;
+}
+
+/** Retouches faites dans l'éditeur, réappliquées si l'on relance l'assistant. */
+export interface QuoteEdits {
+  overrides: Record<string, LineOverride>;
+  removed: string[];
+}
+
+export const EMPTY_EDITS: QuoteEdits = { overrides: {}, removed: [] };
+
 export interface WizardState {
+  edits?: QuoteEdits;
   selection?: SavedSelection;
   metre?: Metre;
   laborDays?: number | null; // null = proposé automatiquement

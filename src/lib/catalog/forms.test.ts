@@ -33,6 +33,11 @@ describe("formulaire accessoire", () => {
     const r = parseAccessoryForm(accessoryToForm());
     expect(Object.keys(r.errors).sort()).toEqual(["category", "name", "public_price"]);
   });
+  it("sans prix public : prix d'achat seul", () => {
+    const r = parseAccessoryForm({ ...accessoryToForm(), category: "autre", name: "Carottage", unit: "u", purchase_price: "25" });
+    expect(r.ok).toBe(true);
+    expect(r.values).toMatchObject({ public_price_cents: null, purchase_price_cents: 2500 });
+  });
 });
 
 describe("formulaire marque", () => {

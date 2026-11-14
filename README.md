@@ -13,7 +13,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 2 | Paramètres de l'entreprise (onboarding) + coefficients | ✅ |
 | 3 | Catalogue : import Excel/CSV, remises, coefficients, historique des prix | ✅ |
 | 4 | Assistant devis : client, pièces, puissances, solutions Éco/Confort/Premium, métré, main d'œuvre | ✅ |
-| 5 | Panneau « Ma marge » + arrondi | à faire |
+| 5 | Éditeur de devis : retouches, lignes libres, remise, panneau « Ma marge », arrondi | ✅ |
 | 6 | PDF du devis | à faire |
 | 7 | Tableau de bord | à faire |
 | 8 | Abonnement Stripe | à faire |
@@ -55,7 +55,7 @@ Vérification de la RLS et de l'import sur un PostgreSQL local :
 
 ```bash
 createdb climdevis_test
-for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql; do
+for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql; do
   psql -d climdevis_test -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -77,8 +77,13 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
 - Déplacement : un aller-retour par jour de chantier, max(minimum, km A/R × prix/km).
   Stationnement activable par chantier : par jour max(déplacement + stationnement, minimum journalier).
   Chantier dans la commune : pas de déplacement, seul le stationnement activé est facturé.
-- Accessoires : prix de vente = prix d'achat × coefficient accessoires (1,30 par défaut, réglable,
-  modifiable par devis) ; achat = prix public × (1 − remise).
+- Accessoires : prix de vente = le plus élevé de (prix public × coefficient accessoires, 1,30 par défaut,
+  modifiable par devis) et (prix d'achat × coefficient sur achat, 2,00). Sans prix public : achat × 2,00.
+- Remise commerciale (€ HT ou %) répartie au prorata des lignes : TVA par taux, charges et alertes
+  recalculées ; remise maximale avant alerte calculée par dichotomie.
+- Arrondi : s'il y a une remise, c'est elle qui absorbe l'écart ; sinon la main d'œuvre (forfait).
+- Retouches (prix, TVA, suppressions, lignes libres) conservées si l'on relance l'assistant
+  (au choix : conserver ou tout recalculer).
 - Import de tarif : mise à jour par marque + référence (sans doublon), remise conservée si le fichier
   n'en contient pas, historique daté de chaque changement de prix (trigger SQL), import tout-ou-rien.
 - Solutions : mono / multi / gainable, une seule marque par option. Éco = prix client le plus bas,
@@ -89,7 +94,7 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
   ≤ 3,5 kW 1/4-3/8, ≤ 5 kW 1/4-1/2, au-delà 3/8-5/8), goulotte, condensats, câble de liaison, pompe
   (option), support mural OU sol, ligne électrique, disjoncteur, complément de charge au-delà de la
   longueur pré-chargée (arrondi au 0,1 kg), mise en service, fiche CERFA 15497*04 (si complément ou
-  à chaque mise en service, réglable), réseau aéraulique et zonage pour le gainable.
+  à chaque mise en service, par défaut — réglementation — ou seulement si complément), réseau aéraulique et zonage pour le gainable.
 - Les lignes du devis sont recalculées côté serveur à partir du catalogue en base.
 - Multi-split : Σ puissances intérieures ≤ 130 % de l'unité extérieure (modifiable par modèle).
 

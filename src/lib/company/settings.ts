@@ -40,6 +40,7 @@ export interface CompanyRow {
   material_charges_rate: number;
   daily_labor_rate_cents: number;
   accessory_sale_coefficient: number;
+  accessory_purchase_coefficient: number;
   preferred_brand_id: string | null;
   commissioning_price_cents: number;
   fluid_form_price_cents: number;
@@ -70,7 +71,7 @@ export const STEPS: { id: StepId; title: string; fields: CompanyField[] }[] = [
   { id: "visuels", title: "Logo et tampon", fields: ["logo_path", "stamp_path"] },
   { id: "assurance", title: "Assurance et banque", fields: ["insurer_name", "insurance_policy", "insurance_coverage", "bank_holder", "iban", "bic"] },
   { id: "tva", title: "TVA et charges", fields: ["vat_regime", "vat_number", "default_vat_rate", "labor_charges_rate", "material_charges_rate"] },
-  { id: "main_oeuvre", title: "Prix, main d'œuvre et marge", fields: ["daily_labor_rate_cents", "accessory_sale_coefficient", "target_margin_per_day_cents", "quote_validity_days", "payment_terms"] },
+  { id: "main_oeuvre", title: "Prix, main d'œuvre et marge", fields: ["daily_labor_rate_cents", "accessory_sale_coefficient", "accessory_purchase_coefficient", "target_margin_per_day_cents", "quote_validity_days", "payment_terms"] },
   { id: "chantier", title: "Chantier et mise en service", fields: ["preferred_brand_id", "commissioning_price_cents", "fluid_form_policy", "fluid_form_price_cents", "default_electric_length_m"] },
   {
     id: "deplacement",
@@ -97,7 +98,7 @@ export function companyRowToForm(row: CompanyRow): CompanyForm {
     const v = row[key];
     if (CENTS.includes(key)) form[key] = centsToInput(v as number);
     else if (RATES.includes(key)) form[key] = rateToInput(v as number);
-    else if (key === "accessory_sale_coefficient" || key === "default_electric_length_m") form[key] = decimalToInput(Number(v));
+    else if (key === "accessory_sale_coefficient" || key === "accessory_purchase_coefficient" || key === "default_electric_length_m") form[key] = decimalToInput(Number(v));
     else form[key] = v === null || v === undefined ? "" : String(v);
   }
   return form;
@@ -226,10 +227,11 @@ export function parseCompanyForm(form: Partial<CompanyForm>, fields: CompanyFiel
       case "preferred_brand_id":
         set("preferred_brand_id", raw === "" ? null : raw);
         break;
-      case "accessory_sale_coefficient": {
-        const n = parseDecimal(raw === "" ? "1,3" : raw);
-        if (n === null || n <= 0 || n > 5) errors.accessory_sale_coefficient = "Coefficient entre 0,01 et 5 (ex. 1,30)";
-        else set("accessory_sale_coefficient", n);
+      case "accessory_sale_coefficient":
+      case "accessory_purchase_coefficient": {
+        const n = parseDecimal(raw === "" ? (k === "accessory_sale_coefficient" ? "1,3" : "2") : raw);
+        if (n === null || n <= 0 || n > 5) errors[k] = "Coefficient entre 0,01 et 5";
+        else set(k, n);
         break;
       }
       case "quote_validity_days": {

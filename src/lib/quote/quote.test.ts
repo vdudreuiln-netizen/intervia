@@ -66,6 +66,7 @@ const acc = (role: CatAccessory["role"], name: string, unit: string, price: numb
   diameter,
   unit,
   publicPriceCents: price,
+  purchasePriceCents: null,
   discount: 0.3,
 });
 const ACCESSORIES: CatAccessory[] = [
@@ -100,6 +101,7 @@ const LS: LineSettings = {
   fluidFormPolicy: "complement",
   defaultElectricM: 10,
   companyAccessoryCoefficient: 1.3,
+  accessoryPurchaseCoefficient: 2,
   materialCoefficient: null,
   accessoryCoefficient: null,
 };
@@ -278,9 +280,11 @@ describe("lignes du devis", () => {
 
   it("les prix des accessoires suivent le coefficient du devis", () => {
     const base = buildLines(monoSalon(), [room("Salon", 3140)], EMPTY_METRE, ACCESSORIES, LS, 1, null).lines.find((l) => l.key.startsWith("goulotte"))!;
-    const q = buildLines(monoSalon(), [room("Salon", 3140)], EMPTY_METRE, ACCESSORIES, { ...LS, accessoryCoefficient: 1.5 }, 1, null).lines.find((l) => l.key.startsWith("goulotte"))!;
-    expect(base.unitSaleCents).toBe(Math.round(980 * 1.3));
-    expect(q.unitSaleCents).toBe(Math.round(980 * 1.5));
+    const q = buildLines(monoSalon(), [room("Salon", 3140)], EMPTY_METRE, ACCESSORIES, { ...LS, accessoryCoefficient: 1.6 }, 1, null).lines.find((l) => l.key.startsWith("goulotte"))!;
+    // goulotte : public 14 €, achat 9,80 € → max(14 × 1,30 ; 9,80 × 2) = 19,60 €
+    expect(base.unitSaleCents).toBe(1960);
+    // coefficient du devis 1,60 sur le prix public → 22,40 €
+    expect(q.unitSaleCents).toBe(2240);
   });
 });
 
@@ -331,6 +335,8 @@ describe("options Éco / Confort / Premium", () => {
     const target = mono.options.find((o) => o.equipment.brandId === "marge")!.result.margin.marginPerDayCents! - 1;
     const p = proposeConfigurations(input({ pricing: { ...PRICING, targetMarginPerDayCents: target } })).find((x) => x.kind === "mono")!;
     expect(p.options.find((o) => o.tags.includes("eco"))!.equipment.brandId).toBe("marge");
+    // les marques sous l'objectif sont comptées comme écartées (la préférée reste en Premium)
+    expect(p.excluded.map((o) => o.equipment.brandId)).toEqual(["eco"]);
   });
 
   it("configuration impossible : raison affichée", () => {

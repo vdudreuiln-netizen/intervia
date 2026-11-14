@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import type { ConfigKind } from "@/lib/quote/types";
 import { useRouter } from "next/navigation";
 import { Button, Card, Notice, Select } from "@/components/ui";
 import { formatEuros } from "@/lib/format";
@@ -36,6 +37,7 @@ export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, 
   const [selected, setSelected] = useState<Equipment | null>(() => (wizard.selection ? fromSelection(wizard.selection, products) : null));
   const priced = useMemo(() => (selected ? priceEquipment(selected, input) : null), [selected, input]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [showExcluded, setShowExcluded] = useState<Partial<Record<ConfigKind, boolean>>>({});
   const [pending, start] = useTransition();
   const roomName = new Map(rooms.map((r) => [r.id, r.name]));
 
@@ -56,6 +58,21 @@ export function SolutionsStep({ quoteId, company, site, coefs, rooms, products, 
                 ))}
               </div>
               {p.premiumNote && <p className="mt-2 text-sm text-slate-600">{p.premiumNote}</p>}
+              {p.excluded.length > 0 && (
+                <p className="mt-2 text-sm text-slate-600">
+                  {p.excluded.length} option(s) écartée(s) car sous l&apos;objectif.{" "}
+                  <button type="button" className="font-bold text-brand underline" onClick={() => setShowExcluded({ ...showExcluded, [p.kind]: !showExcluded[p.kind] })}>
+                    {showExcluded[p.kind] ? "Masquer" : "Voir"}
+                  </button>
+                </p>
+              )}
+              {showExcluded[p.kind] && (
+                <div className="-mx-4 mt-3 flex snap-x gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-3 sm:px-0">
+                  {p.excluded.map((o) => (
+                    <OptionCard key={o.equipment.brandId} option={o} selected={sameEquipment(selected, o.equipment)} vatRegime={company.vat_regime} roomName={roomName} onChoose={() => setSelected(structuredClone(o.equipment))} />
+                  ))}
+                </div>
+              )}
             </>
           )}
         </section>
@@ -95,6 +112,7 @@ function OptionCard({ option: o, selected, vatRegime, roomName, onChoose }: { op
   return (
     <article className={`flex w-[85%] shrink-0 snap-center flex-col rounded-2xl border-4 bg-white p-4 sm:w-auto ${selected ? "border-brand" : "border-slate-300"}`}>
       <div className="flex flex-wrap gap-1">
+        {o.tags.length === 0 && <span className="rounded-full bg-slate-300 px-3 py-1 text-sm font-bold text-slate-800">Écartée</span>}
         {o.tags.map((t) => (
           <span key={t} className="rounded-full bg-brand px-3 py-1 text-sm font-bold text-white" title={OPTION_HINTS[t]}>
             {OPTION_LABELS[t]}

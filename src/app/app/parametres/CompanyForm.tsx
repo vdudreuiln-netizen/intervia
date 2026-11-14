@@ -151,7 +151,16 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brand
           error={e.accessory_sale_coefficient}
           inputMode="decimal"
           suffix="×"
-          hint="Prix de vente = prix d'achat × coefficient (1,30 = achat + 30 %). Modifiable sur chaque devis."
+          hint="Prix de vente = prix public × coefficient (1,30 = prix public + 30 %). Modifiable sur chaque devis."
+        />
+        <Field
+          label="Coefficient minimum sur le prix d'achat des accessoires"
+          value={form.accessory_purchase_coefficient}
+          onChange={set("accessory_purchase_coefficient")}
+          error={e.accessory_purchase_coefficient}
+          inputMode="decimal"
+          suffix="×"
+          hint="Plancher : jamais vendu moins que achat × coefficient (2,00 : liaison achetée 8,40 € → au moins 16,80 €). Sert seul si l'accessoire n'a pas de prix public."
         />
         <p className="text-base text-slate-600">Le coefficient du matériel (prix public × coefficient) se règle par marque, dans le catalogue.</p>
         <MoneyField label="Objectif de marge nette par jour de chantier" value={form.target_margin_per_day_cents} onChange={set("target_margin_per_day_cents")} error={e.target_margin_per_day_cents} hint="Une alerte rouge s'affiche si un devis passe en dessous" />

@@ -4,7 +4,8 @@ import { notFound, redirect } from "next/navigation";
 import { getCurrentCompany } from "@/lib/company/current";
 import { centsToInput, decimalToInput } from "@/lib/format";
 import { fromSelection } from "@/lib/quote/equipment";
-import { companyPricing, loadCoefficients, loadQuote, loadWizardCatalog, siteInfo } from "@/lib/quote/load";
+import { companyPricing, loadCoefficients, loadQuote, loadQuoteLines, loadWizardCatalog, siteInfo } from "@/lib/quote/load";
+import { hasEdits } from "@/lib/quote/edits";
 import { toRoomNeeds, type RoomForm } from "@/lib/quote/rooms";
 import { Stepper, STEP_LABELS } from "./Stepper";
 import { ClientStep } from "./steps/ClientStep";
@@ -87,7 +88,8 @@ export default async function QuoteWizardPage({ params, searchParams }: { params
       const equipment = fromSelection(q.wizard.selection!, catalog.products);
       if (!equipment) redirect(`/app/devis/${id}?etape=4`);
       const props = { quoteId: id, company: pricing, site, coefs, rooms, equipment, accessories: catalog.accessories, wizard: q.wizard };
-      body = step === 5 ? <MetreStep {...props} /> : <LaborStep {...props} />;
+      const manual = step === 6 ? (await loadQuoteLines(supabase, id)).filter((l) => l.origin === "manual").length : 0;
+      body = step === 5 ? <MetreStep {...props} /> : <LaborStep {...props} hasEdits={hasEdits(q.wizard.edits, manual)} />;
     }
   }
 

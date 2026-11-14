@@ -21,11 +21,13 @@ interface Props {
   equipment: Equipment;
   accessories: CatAccessory[];
   wizard: WizardState;
+  /** Le devis contient des retouches faites dans l'éditeur. */
+  hasEdits?: boolean;
 }
 
 const j = (n: number) => `${n.toLocaleString("fr-FR")} j`;
 
-export function LaborStep({ quoteId, company, site, coefs, rooms, equipment, accessories, wizard }: Props) {
+export function LaborStep({ quoteId, company, site, coefs, rooms, equipment, accessories, wizard, hasEdits = false }: Props) {
   const router = useRouter();
   const metre = wizard.metre ?? EMPTY_METRE;
   const proposed = proposeDays(equipment, metre, coefs.laborDays);
@@ -39,7 +41,16 @@ export function LaborStep({ quoteId, company, site, coefs, rooms, equipment, acc
     return computeQuote({ lines: enabledLines(built.lines), laborDays: days, settings: ctx.pricing });
   }, [equipment, rooms, metre, accessories, ctx, days, travel]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [askMode, setAskMode] = useState(false);
   const [pending, start] = useTransition();
+  const create = (mode: "keep" | "recalc") =>
+    start(async () => {
+      const s = await saveWizard(quoteId, { laborDays: daysText.trim() === "" ? null : days });
+      if (!s.ok) return setMsg(s.message ?? null);
+      const r = await finalizeQuote(quoteId, mode);
+      setMsg(r.ok ? null : r.message ?? null);
+      if (r.ok) router.push(`/app/devis/${quoteId}/apercu`);
+    });
 
   const p = coefs.laborDays;
   const indoors = equipment.systems.flatMap((s) => s.indoors);
@@ -84,22 +95,21 @@ export function LaborStep({ quoteId, company, site, coefs, rooms, equipment, acc
         )}
       </Card>
       {msg && <Notice tone="danger">{msg}</Notice>}
-      <Button
-        type="button"
-        full
-        disabled={pending}
-        onClick={() =>
-          start(async () => {
-            const s = await saveWizard(quoteId, { laborDays: daysText.trim() === "" ? null : days });
-            if (!s.ok) return setMsg(s.message ?? null);
-            const r = await finalizeQuote(quoteId);
-            setMsg(r.ok ? null : r.message ?? null);
-            if (r.ok) router.push(`/app/devis/${quoteId}/apercu`);
-          })
-        }
-      >
-        {pending ? "Création du devis…" : "Créer le devis"}
-      </Button>
+      {askMode ? (
+        <Card title="Vous avez retouché ce devis">
+          <p className="text-base">Prix modifiés, lignes supprimées ou ajoutées à la main : que faire en relançant l&apos;assistant ?</p>
+          <Button type="button" full disabled={pending} onClick={() => create("keep")}>
+            {pending ? "Mise à jour…" : "Conserver mes retouches (recommandé)"}
+          </Button>
+          <Button type="button" variant="secondary" full disabled={pending} onClick={() => confirm("Toutes vos retouches et lignes ajoutées à la main seront effacées. Continuer ?") && create("recalc")}>
+            Tout recalculer
+          </Button>
+        </Card>
+      ) : (
+        <Button type="button" full disabled={pending} onClick={() => (hasEdits ? setAskMode(true) : create("keep"))}>
+          {pending ? "Création du devis…" : "Créer le devis"}
+        </Button>
+      )}
       <MarginBar result={result} vatRegime={company.vat_regime} />
     </div>
   );

@@ -12,7 +12,7 @@ export interface CurrentCompany extends CompanyRow {
 const COLUMNS =
   "id, onboarding_done, legal_name, siret, address_line, postal_code, city, phone, email, logo_path, stamp_path, " +
   "insurer_name, insurance_policy, insurance_coverage, bank_holder, iban, bic, vat_regime, vat_number, default_vat_rate, " +
-  "labor_charges_rate, material_charges_rate, daily_labor_rate_cents, accessory_sale_coefficient, target_margin_per_day_cents, quote_validity_days, payment_terms, " +
+  "labor_charges_rate, material_charges_rate, daily_labor_rate_cents, accessory_sale_coefficient, accessory_purchase_coefficient, target_margin_per_day_cents, quote_validity_days, payment_terms, " +
   "base_address, base_postal_code, base_city, base_citycode, base_lat, base_lng, travel_price_per_km_cents, travel_minimum_fee_cents, " +
   "parking_per_day_cents, travel_min_daily_with_parking_cents, preferred_brand_id, commissioning_price_cents, fluid_form_price_cents, fluid_form_policy, default_electric_length_m";
 
@@ -41,6 +41,7 @@ export const getCurrentCompany = cache(async () => {
   company.labor_charges_rate = Number(company.labor_charges_rate);
   company.material_charges_rate = Number(company.material_charges_rate);
   company.accessory_sale_coefficient = Number(company.accessory_sale_coefficient);
+  company.accessory_purchase_coefficient = Number(company.accessory_purchase_coefficient);
   company.default_electric_length_m = Number(company.default_electric_length_m);
   return { supabase, user, company };
 });

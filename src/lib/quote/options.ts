@@ -29,6 +29,8 @@ export interface ConfigProposal {
   unavailable?: string;
   /** La marque préférée ne permet pas cette configuration. */
   premiumNote?: string;
+  /** Options écartées d'Éco / Confort car en alerte (sous l'objectif, sous le coût). */
+  excluded: PricedOption[];
 }
 
 export interface ProposalInput {
@@ -62,7 +64,7 @@ export function proposeConfigurations(input: ProposalInput): ConfigProposal[] {
       if (r.ok) priced.push(priceEquipment(r.equipment, input));
       else lastReason = r.reason;
     }
-    if (priced.length === 0) return { kind, options: [], unavailable: lastReason };
+    if (priced.length === 0) return { kind, options: [], unavailable: lastReason, excluded: [] };
 
     const clean = priced.filter((p) => p.result.alerts.length === 0);
     const pool = clean.length > 0 ? clean : priced;
@@ -84,6 +86,8 @@ export function proposeConfigurations(input: ProposalInput): ConfigProposal[] {
     let premiumNote: string | undefined;
     if (!input.preferredBrandId) premiumNote = "Choisissez votre marque préférée dans les paramètres pour l'option Premium";
     else if (!premium) premiumNote = "Votre marque préférée ne permet pas cette configuration";
-    return { kind, options, premiumNote };
+    const shown = new Set(options.map((o) => o.equipment.brandId));
+    const excluded = clean.length > 0 ? priced.filter((p) => p.result.alerts.length > 0 && !shown.has(p.equipment.brandId)).map((p) => ({ ...p, tags: [] })) : [];
+    return { kind, options, premiumNote, excluded };
   });
 }

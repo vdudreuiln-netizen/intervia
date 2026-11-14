@@ -19,6 +19,7 @@ export interface CompanyPricing {
   daily_labor_rate_cents: number;
   target_margin_per_day_cents: number;
   accessory_sale_coefficient: number;
+  accessory_purchase_coefficient: number;
   travel_price_per_km_cents: number;
   travel_minimum_fee_cents: number;
   travel_min_daily_with_parking_cents: number;
@@ -60,6 +61,7 @@ export function calcContext(c: CompanyPricing, site: SiteInfo, coefs: Coefficien
     fluidFormPolicy: c.fluid_form_policy,
     defaultElectricM: c.default_electric_length_m,
     companyAccessoryCoefficient: c.accessory_sale_coefficient,
+    accessoryPurchaseCoefficient: c.accessory_purchase_coefficient,
     materialCoefficient: w.materialCoefficient ?? null,
     accessoryCoefficient: w.accessoryCoefficient ?? null,
   };

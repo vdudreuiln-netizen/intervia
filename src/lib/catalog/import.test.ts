@@ -37,7 +37,7 @@ describe("lecture CSV", () => {
     const { rows, errors } = normalizeMaterialRows(projectRows(table, header, mapping), {});
     expect(errors).toEqual([]);
     expect(rows).toHaveLength(4);
-    expect(rows[0]).toMatchObject({ brand: "MaMarque", reference: "UE-35", type: "ue_mono", cooling_kw: 3.5, public_price_cents: 109000, discount_rate: 0.35 });
+    expect(rows[0]).toMatchObject({ brand: "MaMarque", reference: "UE-35", type: "ue_mono", cooling_kw: 3.5, public_price_cents: 109000, discount_rate: 0.35, link_diameters: "1/4 - 3/8", precharged_length_m: 7.5, extra_charge_g_per_m: 20 });
     expect(rows[1]!.discount_rate).toBeNull();
   });
 });
@@ -146,6 +146,9 @@ describe("plan d'import (réimport d'un tarif)", () => {
   ];
   const row = (line: number, reference: string, price: number, discount: number | null = null, brand = "Atlas") => ({
     line,
+    link_diameters: null,
+    precharged_length_m: null,
+    extra_charge_g_per_m: null,
     brand,
     reference,
     type: "ue_mono" as const,
@@ -198,5 +201,21 @@ describe("plan d'import (réimport d'un tarif)", () => {
     const p = buildPlan("materiel", [row(2, "MU-25", 42000)], existing, ["Atlas"]);
     expect(p.summary.bigIncreases).toBe(0);
     expect(p.summary.priceChanges).toBe(1);
+  });
+});
+
+describe("champs techniques à l'import", () => {
+  it("lit diamètres, longueur pré-chargée et g/m ; les met à jour au réimport", () => {
+    const { rows, errors } = normalizeMaterialRows(
+      [
+        { line: 2, cells: { reference: "UE", brand: "A", type: "ue_mono", public_price: "1000", link_diameters: '1/4"-3/8"', precharged_length_m: "15 m", extra_charge_g_per_m: "20 g/m" } },
+        { line: 3, cells: { reference: "X", brand: "A", type: "ue_mono", public_price: "1000", link_diameters: "6 mm" } },
+      ],
+      {},
+    );
+    expect(errors.map((e) => e.line)).toEqual([3]);
+    expect(rows[0]).toMatchObject({ link_diameters: '1/4" - 3/8"', precharged_length_m: 15, extra_charge_g_per_m: 20 });
+    const plan = buildPlan("materiel", rows, [{ id: "p", brand: "A", reference: "UE", label: "A UE", public_price_cents: 90000, discount_rate: null }], ["A"]);
+    expect(plan.updates[0]).toMatchObject({ link_diameters: '1/4" - 3/8"', precharged_length_m: 15, extra_charge_g_per_m: 20 });
   });
 });

@@ -9,7 +9,7 @@ import { ACCESSORY_CATEGORIES, ACCESSORY_UNITS, parseAccessoryForm, type Accesso
 import { AUTO_ROLE_LABELS } from "@/lib/quote/types";
 import { deleteAccessory, saveAccessory } from "../../actions";
 
-export function AccessoryEditor({ id, initial, coefficient }: { id: string | null; initial: AccessoryForm; coefficient: number }) {
+export function AccessoryEditor({ id, initial, coefficient, purchaseCoefficient }: { id: string | null; initial: AccessoryForm; coefficient: number; purchaseCoefficient: number }) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState<Partial<Record<AccessoryFormKey, string>>>({});
@@ -22,8 +22,8 @@ export function AccessoryEditor({ id, initial, coefficient }: { id: string | nul
   };
   const parsed = parseAccessoryForm(form);
   const preview =
-    parsed.values.public_price_cents > 0 && !parsed.errors.discount
-      ? catalogPrices({ kind: "accessory", publicPriceCents: parsed.values.public_price_cents, discount: parsed.values.discount_rate, companyCoefficient: coefficient })
+    (parsed.values.public_price_cents ?? 0) > 0 || (parsed.values.purchase_price_cents ?? 0) > 0
+      ? catalogPrices({ kind: "accessory", publicPriceCents: parsed.values.public_price_cents, purchasePriceCents: parsed.values.purchase_price_cents, discount: parsed.values.discount_rate, companyCoefficient: coefficient, purchaseCoefficient })
       : null;
   const per = form.unit === "m" ? " / m" : form.unit === "kg" ? " / kg" : "";
 
@@ -49,7 +49,11 @@ export function AccessoryEditor({ id, initial, coefficient }: { id: string | nul
       </Card>
       <Card title="Prix">
         <MoneyField label={`Prix public HT${per}`} value={form.public_price} onChange={set("public_price")} error={errors.public_price} />
-        <PercentField label="Remise fournisseur" value={form.discount} onChange={set("discount")} error={errors.discount} />
+        {form.public_price.trim() !== "" ? (
+          <PercentField label="Remise fournisseur" value={form.discount} onChange={set("discount")} error={errors.discount} />
+        ) : (
+          <MoneyField label={`Prix d'achat HT${per} (si pas de prix public)`} value={form.purchase_price} onChange={set("purchase_price")} hint={`Vendu prix d'achat × ${purchaseCoefficient.toLocaleString("fr-FR")}`} />
+        )}
         {preview && (
           <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-100 p-4 text-base">
             <div>
@@ -57,7 +61,7 @@ export function AccessoryEditor({ id, initial, coefficient }: { id: string | nul
               <strong className="text-xl">{formatEuros(preview.purchaseCents)}</strong>
             </div>
             <div>
-              <span className="block text-slate-600">Vente (achat × {coefficient.toLocaleString("fr-FR")}){per}</span>
+              <span className="block text-slate-600">Prix de vente{per}</span>
               <strong className="text-xl">{formatEuros(preview.saleCents)}</strong>
             </div>
           </div>

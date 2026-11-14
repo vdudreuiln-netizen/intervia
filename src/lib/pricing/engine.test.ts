@@ -8,6 +8,7 @@ import {
   materialSalePriceCents,
   FRANCHISE_MENTION,
   isPsychologicalPrice,
+  maxDiscount,
   psychologicalBounds,
   purchasePriceCents,
   roundToPsychologicalPrice,
@@ -223,14 +224,23 @@ describe("prix catalogue (matériel et accessoires)", () => {
     const p = catalogPrices({ kind: "material", publicPriceCents: 100000, brandDiscount: 0.35, productDiscount: 0.42, brandCoefficient: 1.1, quoteCoefficient: 1 });
     expect(p).toEqual({ discount: 0.42, purchaseCents: 58000, saleCents: 100000 });
   });
-  it("accessoire : vente = achat × coefficient accessoires (1,30 par défaut)", () => {
-    // liaison 12 €/m public, remise 30 % → achat 8,40 € → vente 10,92 €
-    expect(catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: null })).toEqual({ discount: 0.3, purchaseCents: 840, saleCents: 1092 });
-    expect(catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: 1.3, quoteCoefficient: 1.5 }).saleCents).toBe(1260);
+  it("accessoire : vente = max(public × 1,30 ; achat × 2,00) — liaison achetée 8,40 € vendue 16,80 €", () => {
+    // public 12 € remisé 30 % → achat 8,40 € ; 12 × 1,30 = 15,60 € < 8,40 × 2 = 16,80 €
+    expect(catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: null })).toEqual({ discount: 0.3, purchaseCents: 840, saleCents: 1680 });
+    // grosse remise fournisseur : c'est le prix public × 1,30 qui l'emporte (100 € public, achat 40 €)
+    expect(catalogPrices({ kind: "accessory", publicPriceCents: 10000, discount: 0.6, companyCoefficient: 1.3 }).saleCents).toBe(13000);
+  });
+  it("accessoire : le coefficient du devis remplace celui des paramètres (sur le prix public)", () => {
+    expect(catalogPrices({ kind: "accessory", publicPriceCents: 10000, discount: 0.6, companyCoefficient: 1.3, quoteCoefficient: 1.5 }).saleCents).toBe(15000);
+  });
+  it("accessoire sans prix public : achat × coefficient sur achat (2,00 par défaut)", () => {
+    expect(catalogPrices({ kind: "accessory", publicPriceCents: null, purchasePriceCents: 2500, discount: null, companyCoefficient: 1.3 })).toEqual({ discount: 0, purchaseCents: 2500, saleCents: 5000 });
+    expect(catalogPrices({ kind: "accessory", publicPriceCents: null, purchasePriceCents: 2500, discount: null, companyCoefficient: 1.3, purchaseCoefficient: 1.6 }).saleCents).toBe(4000);
   });
   it("l'alerte sous le coût s'applique aussi aux accessoires", () => {
-    // coefficient 1,10 avec 16 % de charges : 9,24 € de vente ne couvrent pas 8,40 € d'achat + 1,48 € de charges
-    const acc = catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: 1.1 });
+    // coefficients trop bas : 9,60 € de vente ne couvrent pas 8,40 € d'achat + 1,54 € de charges
+    const acc = catalogPrices({ kind: "accessory", publicPriceCents: 1200, discount: 0.3, companyCoefficient: 0.8, purchaseCoefficient: 1.1 });
+    expect(acc.saleCents).toBe(960);
     const r = computeQuote({
       laborDays: 1,
       settings: { ...franchise, materialChargesRate: 0.16 },
@@ -238,6 +248,66 @@ describe("prix catalogue (matériel et accessoires)", () => {
     });
     expect(r.lines[0]!.belowCost).toBe(true);
     expect(r.alerts.map((a) => a.code)).toContain("line_below_cost");
+  });
+});
+
+describe("remise commerciale", () => {
+  it("remise en € : déduite du HT, répartie au prorata, charges recalculées", () => {
+    const r = computeQuote({ ...quote(franchise), discount: { kind: "amount", value: 10000 } });
+    expect(r.grossHtCents).toBe(254000);
+    expect(r.discountCents).toBe(10000);
+    expect(r.totalHtCents).toBe(244000);
+    expect(r.lines.reduce((a, l) => a + l.discountCents, 0)).toBe(10000);
+    // la ligne de 1 500 € porte 1 500 / 2 540 de la remise
+    expect(r.lines[0]!.discountCents).toBe(5906);
+    // marge = avant − remise + charges économisées sur la remise
+    expect(r.margin.netMarginCents).toBeLessThan(108392);
+    expect(r.margin.netMarginCents).toBeGreaterThan(108392 - 10000);
+  });
+  it("remise en % sur le total HT", () => {
+    expect(computeQuote({ ...quote(franchise), discount: { kind: "percent", value: 0.05 } }).discountCents).toBe(12700);
+  });
+  it("assujetti : la TVA est calculée après remise, taux par taux", () => {
+    const r = computeQuote({ ...quote(assujetti), discount: { kind: "percent", value: 0.1 } });
+    expect(r.vat.map((v) => v.baseCents)).toEqual([84600, 144000]);
+    expect(r.totalTtcCents).toBe(228600 + 8460 + 28800);
+  });
+  it("une remise trop forte déclenche les alertes", () => {
+    const r = computeQuote({ ...quote(franchise), discount: { kind: "percent", value: 0.3 } });
+    expect(r.alerts.some((a) => a.code === "line_below_cost" && a.message.startsWith("Avec la remise"))).toBe(true);
+  });
+  it("remise bornée au total", () => {
+    expect(computeQuote({ ...quote(franchise), discount: { kind: "amount", value: 99999999 } }).totalHtCents).toBe(0);
+  });
+});
+
+describe("remise maximale avant alerte", () => {
+  it("la plus grande remise sans aucune alerte", () => {
+    const input = quote({ ...franchise, targetMarginPerDayCents: 50000 });
+    const max = maxDiscount(input);
+    expect(max.cents).toBeGreaterThan(0);
+    expect(computeQuote({ ...input, discount: { kind: "amount", value: max.cents } }).alerts).toEqual([]);
+    expect(computeQuote({ ...input, discount: { kind: "amount", value: max.cents + 1 } }).alerts.length).toBeGreaterThan(0);
+    expect(max.rate).toBeCloseTo(max.cents / 254000);
+  });
+  it("0 si le devis est déjà en alerte", () => {
+    expect(maxDiscount(quote({ ...franchise, targetMarginPerDayCents: 999999 }))).toEqual({ cents: 0, rate: 0 });
+  });
+});
+
+describe("arrondi avec une remise commerciale", () => {
+  it("c'est la remise qui absorbe l'écart, les lignes ne bougent pas", () => {
+    const input = { ...quote(franchise), discount: { kind: "percent" as const, value: 0.03 } }; // 2 463,80 €
+    const r = roundToPsychologicalPrice(input);
+    expect(r.outcome).toBe("rounded_down");
+    expect(r.result.totalTtcCents).toBe(239000);
+    expect(r.lines).toEqual(input.lines);
+    expect(r.discount).toEqual({ kind: "amount", value: 15000 });
+  });
+  it("assujetti avec remise : seuil exact au centime", () => {
+    const r = roundToPsychologicalPrice({ ...quote(assujetti), discount: { kind: "amount", value: 5000 } });
+    expect(isPsychologicalPrice(r.result.totalTtcCents)).toBe(true);
+    expect(r.result.alerts).toEqual([]);
   });
 });
 

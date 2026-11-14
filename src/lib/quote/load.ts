@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAll } from "@/lib/catalog/queries";
 import { withDefaults, type Coefficients } from "@/lib/sizing/coefficients";
 import type { CurrentCompany } from "@/lib/company/current";
+import type { QuoteDiscount, QuoteLineInput } from "@/lib/pricing/engine";
 import type { CompanyPricing, SiteInfo } from "./context";
 import type { RoomValues } from "./rooms";
 import type { AutoRole, CatAccessory, CatProduct, WizardState } from "./types";
@@ -21,7 +22,7 @@ export async function loadWizardCatalog(supabase: SupabaseClient): Promise<{ pro
         .range(from, to) as never,
     ),
     fetchAll<Record<string, unknown>>((from, to) =>
-      supabase.from("accessories").select("id, auto_role, category, name, diameter, unit, public_price_cents, discount_rate").eq("active", true).order("created_at").range(from, to) as never,
+      supabase.from("accessories").select("id, auto_role, category, name, diameter, unit, public_price_cents, purchase_price_cents, discount_rate").eq("active", true).order("created_at").range(from, to) as never,
     ),
   ]);
   return {
@@ -51,7 +52,8 @@ export async function loadWizardCatalog(supabase: SupabaseClient): Promise<{ pro
       name: a.name as string,
       diameter: (a.diameter as string | null) ?? null,
       unit: a.unit as string,
-      publicPriceCents: Number(a.public_price_cents),
+      publicPriceCents: num(a.public_price_cents),
+      purchasePriceCents: num(a.purchase_price_cents),
       discount: Number(a.discount_rate),
     })),
   };
@@ -71,6 +73,7 @@ export function companyPricing(c: CurrentCompany): CompanyPricing {
     daily_labor_rate_cents: Number(c.daily_labor_rate_cents),
     target_margin_per_day_cents: Number(c.target_margin_per_day_cents),
     accessory_sale_coefficient: c.accessory_sale_coefficient,
+    accessory_purchase_coefficient: c.accessory_purchase_coefficient,
     travel_price_per_km_cents: Number(c.travel_price_per_km_cents),
     travel_minimum_fee_cents: Number(c.travel_minimum_fee_cents),
     travel_min_daily_with_parking_cents: Number(c.travel_min_daily_with_parking_cents),
@@ -88,6 +91,9 @@ export interface QuoteRecord {
   number: string;
   status: string;
   wizard: WizardState;
+  laborDays: number;
+  discount: QuoteDiscount | null;
+  vatRegime: "franchise" | "assujetti";
   project: {
     id: string;
     site_address: string | null;
@@ -110,7 +116,7 @@ export async function loadQuote(supabase: SupabaseClient, id: string): Promise<Q
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const { data: q } = await supabase
     .from("quotes")
-    .select("id, number, status, wizard, projects(id, site_address, site_postal_code, site_city, site_citycode, site_lat, site_lng, one_way_km, same_commune, parking_enabled, parking_per_day_cents, gainable_access, clients(id, name, email, phone, address_line, postal_code, city))")
+    .select("id, number, status, wizard, labor_days, discount_kind, discount_value, vat_regime, projects(id, site_address, site_postal_code, site_city, site_citycode, site_lat, site_lng, one_way_km, same_commune, parking_enabled, parking_per_day_cents, gainable_access, clients(id, name, email, phone, address_line, postal_code, city))")
     .eq("id", id)
     .maybeSingle();
   if (!q) return null;
@@ -121,6 +127,9 @@ export async function loadQuote(supabase: SupabaseClient, id: string): Promise<Q
     number: q.number,
     status: q.status,
     wizard: (q.wizard ?? {}) as WizardState,
+    laborDays: Number(q.labor_days),
+    discount: q.discount_kind ? { kind: q.discount_kind as QuoteDiscount["kind"], value: Number(q.discount_value) } : null,
+    vatRegime: q.vat_regime,
     project: {
       id: p.id as string,
       site_address: (p.site_address as string | null) ?? null,
@@ -156,4 +165,31 @@ export async function loadQuote(supabase: SupabaseClient, id: string): Promise<Q
 export function siteInfo(q: QuoteRecord): SiteInfo {
   const p = q.project;
   return { one_way_km: p.one_way_km, same_commune: p.same_commune, parking_enabled: p.parking_enabled, parking_per_day_cents: p.parking_per_day_cents, gainable_access: p.gainable_access };
+}
+
+export interface QuoteLineRow extends QuoteLineInput {
+  origin: "wizard" | "manual";
+  wizardKey: string | null;
+  productId: string | null;
+  accessoryId: string | null;
+  position: number;
+}
+
+export async function loadQuoteLines(supabase: SupabaseClient, quoteId: string): Promise<QuoteLineRow[]> {
+  const { data } = await supabase.from("quote_lines").select("*").eq("quote_id", quoteId).order("position");
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    designation: r.designation,
+    quantity: Number(r.quantity),
+    unit: r.unit,
+    unitPurchaseCents: Number(r.unit_purchase_cents),
+    unitSaleCents: Number(r.unit_sale_cents),
+    vatRate: Number(r.vat_rate),
+    origin: r.origin,
+    wizardKey: r.wizard_key,
+    productId: r.product_id,
+    accessoryId: r.accessory_id,
+    position: r.position,
+  }));
 }

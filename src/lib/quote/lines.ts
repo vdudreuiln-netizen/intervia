@@ -19,6 +19,7 @@ export interface LineSettings {
   fluidFormPolicy: "complement" | "always";
   defaultElectricM: number;
   companyAccessoryCoefficient: number;
+  accessoryPurchaseCoefficient: number;
   /** Coefficients propres au devis (null = ceux des marques / des paramètres). */
   materialCoefficient: number | null;
   accessoryCoefficient: number | null;
@@ -99,7 +100,7 @@ export function buildLines(
   };
 
   const accessoryLine = (key: string, group: string, a: CatAccessory, defaultQty: number, opts: { label?: string; enabled?: boolean; optional?: boolean; radioGroup?: string } = {}): BuiltLine => {
-    const prices = catalogPrices({ kind: "accessory", publicPriceCents: a.publicPriceCents, discount: a.discount, companyCoefficient: s.companyAccessoryCoefficient, quoteCoefficient: s.accessoryCoefficient });
+    const prices = catalogPrices({ kind: "accessory", publicPriceCents: a.publicPriceCents, purchasePriceCents: a.purchasePriceCents, discount: a.discount, companyCoefficient: s.companyAccessoryCoefficient, purchaseCoefficient: s.accessoryPurchaseCoefficient, quoteCoefficient: s.accessoryCoefficient });
     const enabled = m.toggles[key] ?? opts.enabled ?? true;
     const quantity = Math.max(0, m.qty[key] ?? defaultQty);
     return {

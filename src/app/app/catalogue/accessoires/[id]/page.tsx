@@ -27,7 +27,7 @@ export default async function AccessoryPage({ params }: { params: Promise<{ id: 
         ← Catalogue
       </Link>
       <h1 className="text-3xl font-extrabold">{isNew ? "Nouvel accessoire" : "Accessoire"}</h1>
-      <AccessoryEditor id={isNew ? null : id} initial={initial} coefficient={company.accessory_sale_coefficient} />
+      <AccessoryEditor id={isNew ? null : id} initial={initial} coefficient={company.accessory_sale_coefficient} purchaseCoefficient={company.accessory_purchase_coefficient} />
       <PriceHistory items={history} />
     </div>
   );

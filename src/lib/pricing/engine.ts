@@ -40,19 +40,30 @@ export interface PricingSettings {
   targetMarginPerDayCents: number;
 }
 
+/** Remise commerciale globale : montant HT en centimes, ou pourcentage (0.05 = 5 %). */
+export interface QuoteDiscount {
+  kind: "amount" | "percent";
+  value: number;
+}
+
 export interface QuoteInput {
   lines: QuoteLineInput[];
   /** Nombre de jours de chantier (sert à la marge par jour). */
   laborDays: number;
   settings: PricingSettings;
+  discount?: QuoteDiscount | null;
 }
 
 export interface PricedLine extends QuoteLineInput {
   totalSaleCents: number;
+  /** Part de la remise commerciale imputée à la ligne (au prorata). */
+  discountCents: number;
+  /** Vente HT après remise. */
+  netSaleCents: number;
   totalPurchaseCents: number;
   /** Charges sociales imputables à la ligne. */
   chargesCents: number;
-  /** Prix de vente − achat − charges. */
+  /** Vente après remise − achat − charges. */
   contributionCents: number;
   /** Vendue sous son coût de revient (achat + charges) ? */
   belowCost: boolean;
@@ -73,6 +84,8 @@ export interface QuoteAlert {
 }
 
 export interface MarginPanel {
+  /** Remise commerciale accordée (HT). */
+  discountCents: number;
   purchaseCostCents: number; // coût d'achat matériel + accessoires (+ coût réel éventuel des autres lignes)
   materialSaleCents: number; // vente HT matériel + accessoires
   laborSaleCents: number;
@@ -88,6 +101,11 @@ export interface MarginPanel {
 
 export interface QuoteResult {
   lines: PricedLine[];
+  /** Total HT avant remise commerciale. */
+  grossHtCents: number;
+  /** Remise commerciale HT (0 si aucune). */
+  discountCents: number;
+  /** Total HT après remise. */
   totalHtCents: number;
   vat: VatBreakdown[];
   totalVatCents: number;
@@ -151,8 +169,9 @@ export function materialSalePriceCents(publicPriceCents: number, coefficient: nu
   return roundCents(publicPriceCents * coefficient);
 }
 
-/** Coefficient accessoires par défaut : prix de vente = prix d'achat × 1,30. */
+/** Accessoires : prix de vente ≥ prix public × 1,30 et ≥ prix d'achat × 2,00. */
 export const DEFAULT_ACCESSORY_COEFFICIENT = 1.3;
+export const DEFAULT_ACCESSORY_PURCHASE_COEFFICIENT = 2;
 
 export interface CatalogPrices {
   discount: number;
@@ -163,11 +182,22 @@ export interface CatalogPrices {
 /**
  * Prix d'un article du catalogue, tels qu'ils seront repris dans un devis.
  *  - matériel    : achat = public × (1 − remise) ; vente = PUBLIC × coefficient (marque ou devis)
- *  - accessoire  : achat = public × (1 − remise) ; vente = ACHAT × coefficient accessoires (paramètres ou devis)
+ *  - accessoire  : achat = public × (1 − remise), ou prix d'achat saisi s'il n'y a pas de prix public ;
+ *                  vente = le plus élevé de (PUBLIC × coefficient accessoires) et (ACHAT × coefficient sur achat).
+ *                  Sans prix public : ACHAT × coefficient sur achat.
  */
 export function catalogPrices(
   item: { kind: "material"; publicPriceCents: number; brandDiscount: number | null; productDiscount: number | null; brandCoefficient: number | null; quoteCoefficient?: number | null }
-    | { kind: "accessory"; publicPriceCents: number; discount: number | null; companyCoefficient: number | null; quoteCoefficient?: number | null },
+    | {
+        kind: "accessory";
+        publicPriceCents: number | null;
+        /** Prix d'achat saisi directement (accessoire sans prix public). */
+        purchasePriceCents?: number | null;
+        discount: number | null;
+        companyCoefficient: number | null;
+        purchaseCoefficient?: number | null;
+        quoteCoefficient?: number | null;
+      },
 ): CatalogPrices {
   if (item.kind === "material") {
     const discount = effectiveDiscount(item.brandDiscount, item.productDiscount);
@@ -175,10 +205,15 @@ export function catalogPrices(
     const coef = effectiveSaleCoefficient(item.brandCoefficient, item.quoteCoefficient);
     return { discount, purchaseCents, saleCents: materialSalePriceCents(item.publicPriceCents, coef) };
   }
+  const purchaseCoef = effectiveSaleCoefficient(item.purchaseCoefficient ?? DEFAULT_ACCESSORY_PURCHASE_COEFFICIENT, null);
+  if (item.publicPriceCents === null) {
+    const purchaseCents = Math.max(0, item.purchasePriceCents ?? 0);
+    return { discount: 0, purchaseCents, saleCents: roundCents(purchaseCents * purchaseCoef) };
+  }
   const discount = effectiveDiscount(null, item.discount);
   const purchaseCents = purchasePriceCents(item.publicPriceCents, discount);
   const coef = effectiveSaleCoefficient(item.companyCoefficient ?? DEFAULT_ACCESSORY_COEFFICIENT, item.quoteCoefficient);
-  return { discount, purchaseCents, saleCents: roundCents(purchaseCents * coef) };
+  return { discount, purchaseCents, saleCents: Math.max(materialSalePriceCents(item.publicPriceCents, coef), roundCents(purchaseCents * purchaseCoef)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -253,33 +288,63 @@ function isMaterial(kind: LineKind): boolean {
   return kind === "material" || kind === "accessory";
 }
 
+/** Montant de la remise HT, borné entre 0 et le total. */
+export function discountAmountCents(grossHtCents: number, d: QuoteDiscount | null | undefined): number {
+  if (!d || !(d.value > 0)) return 0;
+  const raw = d.kind === "percent" ? roundCents(grossHtCents * Math.min(d.value, 1)) : Math.round(d.value);
+  return Math.max(0, Math.min(raw, grossHtCents));
+}
+
+/** Répartit `amount` au prorata des montants (méthode du plus fort reste, au centime près). */
+function allocate(amount: number, weights: number[]): number[] {
+  const total = weights.reduce((a, w) => a + Math.max(0, w), 0);
+  if (amount === 0 || total === 0) return weights.map(() => 0);
+  const exact = weights.map((w) => (Math.max(0, w) * amount) / total);
+  const out = exact.map(Math.floor);
+  let rest = amount - out.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => [x - Math.floor(x), i] as const).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (const [, i] of order) {
+    if (rest <= 0) break;
+    out[i]! += 1;
+    rest--;
+  }
+  return out;
+}
+
 export function computeQuote(input: QuoteInput): QuoteResult {
   const { settings } = input;
   const franchise = settings.vatRegime === "franchise";
 
-  const lines: PricedLine[] = input.lines.map((l) => {
+  const base = input.lines.map((l) => {
     if (l.quantity < 0) throw new RangeError(`Quantité négative sur « ${l.designation} »`);
     if (!franchise && !ALLOWED_VAT_RATES.includes(l.vatRate)) {
       throw new RangeError(`Taux de TVA non autorisé sur « ${l.designation} » : ${l.vatRate}`);
     }
-    const totalSaleCents = roundCents(l.quantity * l.unitSaleCents);
-    const totalPurchaseCents = roundCents(l.quantity * l.unitPurchaseCents);
+    return { l, totalSaleCents: roundCents(l.quantity * l.unitSaleCents), totalPurchaseCents: roundCents(l.quantity * l.unitPurchaseCents) };
+  });
+  const grossHtCents = base.reduce((a, b) => a + b.totalSaleCents, 0);
+  const discountCents = discountAmountCents(grossHtCents, input.discount);
+  const shares = allocate(discountCents, base.map((b) => b.totalSaleCents));
+
+  const lines: PricedLine[] = base.map(({ l, totalSaleCents, totalPurchaseCents }, i) => {
+    const lineDiscount = shares[i]!;
+    const netSaleCents = totalSaleCents - lineDiscount;
     const rate = isMaterial(l.kind) ? settings.materialChargesRate : settings.laborChargesRate;
-    const chargesCents = roundCents(Math.max(0, totalSaleCents) * rate);
-    const contributionCents = totalSaleCents - totalPurchaseCents - chargesCents;
+    const chargesCents = roundCents(Math.max(0, netSaleCents) * rate);
+    const contributionCents = netSaleCents - totalPurchaseCents - chargesCents;
     const belowCost = l.quantity > 0 && contributionCents < 0;
-    return { ...l, vatRate: franchise ? 0 : l.vatRate, totalSaleCents, totalPurchaseCents, chargesCents, contributionCents, belowCost };
+    return { ...l, vatRate: franchise ? 0 : l.vatRate, totalSaleCents, discountCents: lineDiscount, netSaleCents, totalPurchaseCents, chargesCents, contributionCents, belowCost };
   });
 
   const sum = (pred: (l: PricedLine) => boolean, f: (l: PricedLine) => number) =>
     lines.filter(pred).reduce((acc, l) => acc + f(l), 0);
 
-  const totalHtCents = sum(() => true, (l) => l.totalSaleCents);
+  const totalHtCents = grossHtCents - discountCents;
 
-  // TVA par taux, sur le total HT de chaque taux.
+  // TVA par taux, sur le total HT (après remise) de chaque taux.
   const byRate = new Map<number, number>();
   if (!franchise) {
-    for (const l of lines) byRate.set(l.vatRate, (byRate.get(l.vatRate) ?? 0) + l.totalSaleCents);
+    for (const l of lines) byRate.set(l.vatRate, (byRate.get(l.vatRate) ?? 0) + l.netSaleCents);
   }
   const vat: VatBreakdown[] = [...byRate.entries()]
     .sort(([a], [b]) => a - b)
@@ -299,7 +364,13 @@ export function computeQuote(input: QuoteInput): QuoteResult {
   const alerts: QuoteAlert[] = [];
   for (const l of lines) {
     if (l.belowCost) {
-      alerts.push({ code: "line_below_cost", lineId: l.id, message: `« ${l.designation} » est vendu sous son coût de revient (achat + charges).` });
+      alerts.push({
+        code: "line_below_cost",
+        lineId: l.id,
+        message: l.discountCents > 0 && l.totalSaleCents - l.totalPurchaseCents - roundCents(l.totalSaleCents * (isMaterial(l.kind) ? settings.materialChargesRate : settings.laborChargesRate)) >= 0
+          ? `Avec la remise, « ${l.designation} » passe sous son coût de revient (achat + charges).`
+          : `« ${l.designation} » est vendu sous son coût de revient (achat + charges).`,
+      });
     }
   }
   if (netMarginCents < 0) {
@@ -311,12 +382,15 @@ export function computeQuote(input: QuoteInput): QuoteResult {
 
   return {
     lines,
+    grossHtCents,
+    discountCents,
     totalHtCents,
     vat,
     totalVatCents,
     totalTtcCents: totalHtCents + totalVatCents,
     vatMention: franchise ? FRANCHISE_MENTION : null,
     margin: {
+      discountCents,
       purchaseCostCents,
       materialSaleCents,
       laborSaleCents,
@@ -331,6 +405,31 @@ export function computeQuote(input: QuoteInput): QuoteResult {
     },
     alerts,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Remise maximale possible avant alerte
+// ---------------------------------------------------------------------------
+
+/**
+ * Plus grande remise commerciale (HT) qui ne déclenche aucune alerte : aucune
+ * ligne sous son coût, marge positive, marge/jour ≥ objectif. 0 si le devis
+ * est déjà en alerte sans remise. Recherche dichotomique (les alertes ne font
+ * qu'augmenter avec la remise).
+ */
+export function maxDiscount(input: QuoteInput): { cents: number; rate: number } {
+  const ok = (d: number) => computeQuote({ ...input, discount: { kind: "amount", value: d } }).alerts.length === 0;
+  const gross = computeQuote({ ...input, discount: null }).grossHtCents;
+  if (gross === 0 || !ok(0)) return { cents: 0, rate: 0 };
+  let lo = 0;
+  let hi = gross;
+  if (ok(hi)) lo = hi;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (ok(mid)) lo = mid;
+    else hi = mid;
+  }
+  return { cents: lo, rate: lo / gross };
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +471,7 @@ export interface RoundingResult {
   outcome: RoundingOutcome;
   reason: string;
   lines: QuoteLineInput[];
+  discount: QuoteDiscount | null;
   result: QuoteResult;
 }
 
@@ -380,41 +480,63 @@ function violatesConstraints(r: QuoteResult): boolean {
 }
 
 /**
- * Ajuste le devis pour que le TOTAL TTC (ce que voit le particulier) tombe sur
- * un seuil psychologique. L'ajustement est porté par la ligne de main d'œuvre
- * la plus importante (elle n'a pas de coût d'achat, donc ne peut pas passer
- * sous son coût), convertie en forfait ; à défaut, par la ligne la plus chère.
- *
- * Règle : on essaie le seuil inférieur ; s'il ferait passer une ligne sous son
- * coût, la marge sous zéro ou la marge par jour sous l'objectif, on prend le
- * seuil supérieur. Le résultat ne crée jamais d'alerte qui n'existait pas.
+ * Plus petite valeur entière x de [lo, hi] telle que f(x) ≥ target (f croissante),
+ * ou null. Sert à trouver un prix ou une remise qui donne un total exact.
+ */
+function searchExact(lo: number, hi: number, f: (x: number) => number, target: number): number | null {
+  if (f(hi) < target || f(lo) > target) return null;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (f(mid) >= target) hi = mid;
+    else lo = mid + 1;
+  }
+  return f(lo) === target ? lo : null;
+}
+
+/**
+ * Ajuste le devis pour que le TOTAL TTC (ce que voit le client ; HT en
+ * franchise) tombe sur un seuil psychologique.
+ *  - s'il y a une remise commerciale, c'est elle qui absorbe l'écart (convertie en montant) ;
+ *  - sinon, la ligne de main d'œuvre la plus importante, convertie en forfait
+ *    (elle n'a pas de coût d'achat) ; à défaut la ligne la plus chère.
+ * Règle : seuil inférieur, sauf s'il crée une alerte (sous le coût, marge/jour
+ * sous l'objectif…) : alors seuil supérieur. Jamais d'alerte nouvelle.
  */
 export function roundToPsychologicalPrice(input: QuoteInput): RoundingResult {
   const current = computeQuote(input);
-  if (isPsychologicalPrice(current.totalTtcCents)) {
-    return { outcome: "unchanged", reason: "Le total est déjà sur un seuil psychologique.", lines: input.lines, result: current };
-  }
-  const target = pickAdjustmentLine(input.lines);
-  if (!target) {
-    return { outcome: "unchanged", reason: "Aucune ligne ajustable.", lines: input.lines, result: current };
-  }
+  const unchanged = (reason: string): RoundingResult => ({ outcome: "unchanged", reason, lines: input.lines, discount: input.discount ?? null, result: current });
+  if (isPsychologicalPrice(current.totalTtcCents)) return unchanged("Le total est déjà sur un seuil psychologique.");
 
   const { lower, upper } = psychologicalBounds(current.totalTtcCents);
   const alreadyInAlert = violatesConstraints(current);
+  const target = pickAdjustmentLine(input.lines);
 
-  const attempt = (targetTtc: number) => {
-    const lines = adjustLineToReachTtc(input, target.id, targetTtc);
-    if (!lines) return null;
-    const result = computeQuote({ ...input, lines });
-    if (result.totalTtcCents !== targetTtc) return null;
-    return { lines, result };
+  const viaDiscount = (targetTtc: number) => {
+    if (current.discountCents <= 0) return null;
+    const ttc = (d: number) => computeQuote({ ...input, discount: { kind: "amount", value: d } }).totalTtcCents;
+    // TTC décroît avec la remise : on cherche sur −d
+    const gross = current.grossHtCents;
+    const neg = searchExact(-gross, 0, (x) => ttc(-x), targetTtc);
+    if (neg === null) return null;
+    const discount: QuoteDiscount = { kind: "amount", value: -neg };
+    return { lines: input.lines, discount, result: computeQuote({ ...input, discount }) };
   };
+  const viaLine = (targetTtc: number) => {
+    if (!target) return null;
+    const designation = target.quantity === 1 ? target.designation : `${target.designation} (forfait ${formatQty(target.quantity)} ${target.unit})`;
+    const unitPurchase = roundCents(target.quantity * target.unitPurchaseCents);
+    const withLine = (ht: number) =>
+      input.lines.map((l) => (l.id === target.id ? { ...l, designation, quantity: 1, unit: "forfait", unitSaleCents: ht, unitPurchaseCents: unitPurchase } : l));
+    const ht = searchExact(0, Math.max(current.grossHtCents * 3, 100000), (x) => computeQuote({ ...input, lines: withLine(x) }).totalTtcCents, targetTtc);
+    if (ht === null) return null;
+    const lines = withLine(ht);
+    return { lines, discount: input.discount ?? null, result: computeQuote({ ...input, lines }) };
+  };
+  const attempt = (t: number) => viaDiscount(t) ?? viaLine(t);
 
   if (lower !== null && !alreadyInAlert) {
     const down = attempt(lower);
-    if (down && !violatesConstraints(down.result)) {
-      return { outcome: "rounded_down", reason: "Arrondi au seuil inférieur.", ...down };
-    }
+    if (down && !violatesConstraints(down.result)) return { outcome: "rounded_down", reason: "Arrondi au seuil inférieur.", ...down };
   }
   const up = attempt(upper);
   if (up) {
@@ -423,7 +545,7 @@ export function roundToPsychologicalPrice(input: QuoteInput): RoundingResult {
       : "Le seuil inférieur ferait passer sous le coût ou sous l'objectif de marge : arrondi au seuil supérieur.";
     return { outcome: "rounded_up", reason, ...up };
   }
-  return { outcome: "unchanged", reason: "Impossible d'atteindre un seuil exact.", lines: input.lines, result: current };
+  return unchanged(target ? "Impossible d'atteindre un seuil exact." : "Aucune ligne ajustable.");
 }
 
 function pickAdjustmentLine(lines: QuoteLineInput[]): QuoteLineInput | undefined {
@@ -431,35 +553,6 @@ function pickAdjustmentLine(lines: QuoteLineInput[]): QuoteLineInput | undefined
   const labor = lines.filter((l) => l.kind === "labor" && l.quantity > 0).sort(byTotal);
   if (labor[0]) return labor[0];
   return lines.filter((l) => l.kind !== "travel" && l.quantity > 0).sort(byTotal)[0];
-}
-
-/**
- * Transforme la ligne `lineId` en forfait (quantité 1) dont le prix HT donne
- * exactement `targetTtc` au total. Retourne null si impossible (prix négatif).
- */
-function adjustLineToReachTtc(input: QuoteInput, lineId: string, targetTtc: number): QuoteLineInput[] | null {
-  const line = input.lines.find((l) => l.id === lineId)!;
-  const others = input.lines.filter((l) => l.id !== lineId);
-  const franchise = input.settings.vatRegime === "franchise";
-  const rate = franchise ? 0 : line.vatRate;
-  const othersResult = computeQuote({ ...input, lines: others });
-  const otherSameRateHt = othersResult.vat.find((v) => v.rate === rate)?.baseCents ?? 0;
-  const otherSameRateVat = othersResult.vat.find((v) => v.rate === rate)?.vatCents ?? 0;
-  const remainingTtc = targetTtc - (othersResult.totalTtcCents - otherSameRateHt - otherSameRateVat);
-  // total TTC du taux = base + round(base × rate) ; on cherche la base entière.
-  const estimate = Math.round(remainingTtc / (1 + rate));
-  const unitPurchase = line.quantity > 0 ? roundCents(line.quantity * line.unitPurchaseCents) : 0;
-  for (const delta of [0, -1, 1, -2, 2]) {
-    const base = estimate + delta;
-    if (base + roundCents(base * rate) === remainingTtc) {
-      const lineHt = base - otherSameRateHt;
-      if (lineHt < 0) return null;
-      const designation = line.quantity === 1 ? line.designation : `${line.designation} (forfait ${formatQty(line.quantity)} ${line.unit})`;
-      const adjusted: QuoteLineInput = { ...line, designation, quantity: 1, unit: "forfait", unitSaleCents: lineHt, unitPurchaseCents: unitPurchase };
-      return input.lines.map((l) => (l.id === lineId ? adjusted : l));
-    }
-  }
-  return null;
 }
 
 function formatQty(q: number): string {

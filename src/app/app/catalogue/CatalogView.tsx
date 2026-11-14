@@ -15,7 +15,7 @@ const PAGE = 100;
 const kw = (n: number | null) => (n === null ? "" : `${n.toLocaleString("fr-FR")} kW`);
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-export function CatalogView({ tab, brands, products, accessories, accessoryCoefficient }: { tab: Tab; brands: BrandItem[]; products: ProductItem[]; accessories: AccessoryItem[]; accessoryCoefficient: number }) {
+export function CatalogView({ tab, brands, products, accessories, accessoryCoefficient, purchaseCoefficient }: { tab: Tab; brands: BrandItem[]; products: ProductItem[]; accessories: AccessoryItem[]; accessoryCoefficient: number; purchaseCoefficient: number }) {
   const hasExamples = brands.some((b) => b.is_example) || accessories.some((a) => a.is_example);
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "materiel", label: "Matériel", count: products.length },
@@ -40,7 +40,7 @@ export function CatalogView({ tab, brands, products, accessories, accessoryCoeff
       </nav>
       {hasExamples && <ExamplesNotice />}
       {tab === "materiel" && <ProductList products={products} />}
-      {tab === "accessoires" && <AccessoryList accessories={accessories} coefficient={accessoryCoefficient} />}
+      {tab === "accessoires" && <AccessoryList accessories={accessories} coefficient={accessoryCoefficient} purchaseCoefficient={purchaseCoefficient} />}
       {tab === "marques" && <BrandList brands={brands} />}
     </div>
   );
@@ -160,7 +160,7 @@ function ProductList({ products }: { products: ProductItem[] }) {
   );
 }
 
-function AccessoryList({ accessories, coefficient }: { accessories: AccessoryItem[]; coefficient: number }) {
+function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { accessories: AccessoryItem[]; coefficient: number; purchaseCoefficient: number }) {
   const [q, setQ] = useState("");
   const filtered = accessories.filter((a) => norm(`${a.name} ${a.diameter ?? ""} ${a.reference ?? ""} ${ACCESSORY_CATEGORIES[a.category] ?? a.category}`).includes(norm(q.trim())));
   const groups = [...new Set(filtered.map((a) => a.category))];
@@ -168,7 +168,7 @@ function AccessoryList({ accessories, coefficient }: { accessories: AccessoryIte
     <div className="space-y-4">
       <Actions addHref="/app/catalogue/accessoires/nouveau" addLabel="+ Ajouter un accessoire" target="accessoires" />
       <p className="text-base text-slate-700">
-        Prix de vente = prix d&apos;achat × {coefficient.toLocaleString("fr-FR", { minimumFractionDigits: 2 })} (
+        Prix de vente = prix public × {coefficient.toLocaleString("fr-FR", { minimumFractionDigits: 2 })}, et jamais moins que l&apos;achat × {purchaseCoefficient.toLocaleString("fr-FR", { minimumFractionDigits: 2 })} (
         <Link href="/app/parametres" className="font-bold text-brand underline">
           modifier
         </Link>
