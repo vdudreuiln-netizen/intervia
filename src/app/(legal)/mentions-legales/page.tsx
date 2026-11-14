@@ -11,9 +11,15 @@ export default function MentionsLegales() {
       <h2>Éditeur du service</h2>
       <ul>
         <li>{EDITOR.companyName} — {EDITOR.legalForm}</li>
-        <li>SIREN : {EDITOR.siren} — {EDITOR.rcsOrRm}</li>
+        <li>
+          SIRET : {EDITOR.siret}
+          {EDITOR.rcsOrRm && ` — ${EDITOR.rcsOrRm}`}
+        </li>
         <li>Adresse : {EDITOR.address}</li>
-        <li>Contact : {EDITOR.email} — {EDITOR.phone}</li>
+        <li>
+          Contact : {EDITOR.email}
+          {EDITOR.phone && ` — ${EDITOR.phone}`}
+        </li>
         <li>Directeur de la publication : {EDITOR.publicationDirector}</li>
         <li>{EDITOR.vatMention}</li>
       </ul>

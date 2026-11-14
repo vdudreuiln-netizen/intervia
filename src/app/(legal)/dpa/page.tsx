@@ -44,7 +44,7 @@ export default function Dpa() {
         <li>Hébergement de la base de données : {HOSTING.database}.</li>
         <li>Hébergement de l&apos;application : {HOSTING.app}.</li>
         <li>Géocodage des adresses de chantier : IGN, Géoplateforme (France).</li>
-        <li>Envoi d&apos;e-mails : [À COMPLÉTER : prestataire SMTP].</li>
+        <li>Envoi d&apos;e-mails : service d&apos;envoi intégré de Supabase (phase de test, à remplacer par un prestataire dédié avant le premier client payant).</li>
       </ul>
 
       <h2>5. Mesures de sécurité</h2>

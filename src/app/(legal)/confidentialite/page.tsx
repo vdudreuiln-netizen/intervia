@@ -47,7 +47,7 @@ export default function Confidentialite() {
         <li>Application : {HOSTING.app}.</li>
         <li>Paiements : {HOSTING.payments}.</li>
         <li>Géocodage des adresses : Institut national de l&apos;information géographique et forestière (IGN, Géoplateforme, France) — seules les adresses saisies sont transmises.</li>
-        <li>Envoi des e-mails : [À COMPLÉTER : prestataire SMTP et pays d&apos;hébergement].</li>
+        <li>Envoi des e-mails : service d&apos;envoi intégré de Supabase (phase de test, à remplacer par un prestataire dédié avant le premier client payant).</li>
       </ul>
       <p>
         Certains prestataires appartiennent à des groupes établis hors de l&apos;Union européenne (Vercel Inc., Supabase Inc.). Les éventuels transferts sont encadrés par les clauses contractuelles types de la Commission européenne et, le cas

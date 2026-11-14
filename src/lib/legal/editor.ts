@@ -1,25 +1,30 @@
 /**
  * Informations sur l'ÉDITEUR de ClimDevis (vous), affichées dans les pages légales.
- * ➜ À COMPLÉTER avant la mise en ligne : remplacez chaque valeur « [À COMPLÉTER …] ».
+ * ➜ À METTRE À JOUR avant le premier client payant (statut définitif).
  *   (Sur GitHub : ouvrez ce fichier, cliquez sur le crayon « Edit this file », modifiez,
  *   puis « Commit changes ». Vercel redéploie automatiquement.)
  */
+// À METTRE À JOUR avant le premier client payant (statut définitif).
+// Informations provisoires : phase de test, aucun client payant.
 export const EDITOR = {
   productName: "ClimDevis",
-  companyName: "[À COMPLÉTER : raison sociale ou nom et prénom + « EI »]",
-  legalForm: "[À COMPLÉTER : forme juridique, ex. Entreprise individuelle, SAS au capital de … €]",
-  siren: "[À COMPLÉTER : SIREN]",
-  rcsOrRm: "[À COMPLÉTER : RCS de … ou « dispensé d'immatriculation »]",
-  address: "[À COMPLÉTER : adresse postale complète]",
-  email: "[À COMPLÉTER : adresse e-mail de contact]",
-  phone: "[À COMPLÉTER : numéro de téléphone]",
-  publicationDirector: "[À COMPLÉTER : nom du directeur de la publication]",
+  companyName: "Vincent Dudreuil EI",
+  legalForm: "Entrepreneur individuel",
+  siren: "851 974 907",
+  siret: "851 974 907 00012",
+  /** Immatriculation (RCS / RM / RNE) : vide = non affichée, le SIRET suffit pendant la phase de test. */
+  rcsOrRm: "",
+  address: "10 rue Capella, 33185 Le Haillan",
+  email: "monartisanplombier33@gmail.com",
+  /** Vide = non affiché. */
+  phone: "",
+  publicationDirector: "Vincent Dudreuil",
   /** Tant que l'éditeur est en franchise de TVA. */
   vatMention: "TVA non applicable, art. 293 B du CGI",
-  supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "[À COMPLÉTER : e-mail du support]",
-  dpoContact: "[À COMPLÉTER : e-mail pour les questions de données personnelles]",
-  /** Ville du tribunal compétent (litiges entre professionnels). */
-  court: "[À COMPLÉTER : ville du tribunal de commerce]",
+  supportEmail: process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "monartisanplombier33@gmail.com",
+  dpoContact: "monartisanplombier33@gmail.com",
+  /** Ville du tribunal compétent (litiges entre professionnels) : celui du siège (Le Haillan, Gironde). */
+  court: "Bordeaux",
 };
 
 /** Version des documents contractuels : à changer à chaque modification des CGV / politique. */
