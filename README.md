@@ -15,7 +15,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 4 | Assistant devis : client, pièces, puissances, solutions Éco/Confort/Premium, métré, main d'œuvre | ✅ |
 | 5 | Éditeur de devis : retouches, lignes libres, remise, panneau « Ma marge », arrondi | ✅ |
 | 6 | PDF du devis : modes particulier / détaillé, mentions légales, acompte, rétractation, partage | ✅ |
-| 7 | Tableau de bord | à faire |
+| 7 | Tableau de bord : CA HT signé, marge, transformation, relances, duplication | ✅ |
 | 8 | Abonnement Stripe | à faire |
 
 ## Organisation
@@ -29,6 +29,7 @@ src/lib/company/       paramètres entreprise : validation (SIRET, IBAN, TVA…)
 src/lib/catalog/       import de tarifs (CSV, xlsx), plan d'import, formulaires du catalogue
 src/lib/geo/           géocodage et distance routière (Géoplateforme IGN), détection « même commune »
 src/lib/quote/         assistant devis : choix du matériel, options, lignes, métré (pur, testé)
+src/lib/dashboard/     indicateurs du mois (heure de Paris), relances, message type
 src/lib/pdf/           modèle du devis imprimé (pur, testé) et rendu PDF (@react-pdf/renderer)
 src/app/               écrans (connexion, onboarding /app/bienvenue, /app/parametres)
 ```
@@ -110,5 +111,14 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
 - Signé chez le client : information 14 jours + formulaire de rétractation détachable ; acompte payable
   7 jours après la signature (art. L221-10). Option démarrage anticipé (L221-25) et dépannage urgent (L221-28 8°).
 - Médiateur, SIRET ou décennale manquant : bandeau rouge sur le PDF et passage en « Envoyé » bloqué.
+
+## Tableau de bord
+
+- CA signé HT et marge nette signée : devis acceptés dans le mois (date du clic « Accepté », heure de Paris).
+- Taux de transformation : parmi les devis envoyés dans le mois, part acceptée à ce jour ; comparaison au mois précédent.
+- Relance : devis « envoyé » sans réponse depuis N jours (7 par défaut, réglable), depuis l'envoi ou la dernière
+  relance ; bouton « Relancer » = message type via le partage du téléphone, date de relance notée.
+- Dupliquer : même client ou autre client (par défaut) ; prix recalculés avec le catalogue actuel, retouches
+  conservées, écarts signalés (prix mis à jour, prix d'achat changé sous une retouche).
 
 > Le dimensionnement W/m³ est un ordre de grandeur pour chiffrer, pas un bilan thermique réglementaire.

@@ -7,7 +7,8 @@ import { centsToInput, decimalToInput, formatEuros, formatPercent, parseDecimal,
 import { computeQuote, maxDiscount, type PricingSettings, type QuoteDiscount, type PricedLine } from "@/lib/pricing/engine";
 import type { FreeLineForm } from "@/lib/quote/edits";
 import type { QuoteLineRow } from "@/lib/quote/load";
-import { addFreeLine, deleteLine, roundQuote, setDiscount, setQuoteCoefficients, updateLine, type DocumentOptions } from "../../actions";
+import { addFreeLine, deleteLine, dismissPriceNotices, roundQuote, setDiscount, setQuoteCoefficients, updateLine, type DocumentOptions } from "../../actions";
+import type { WizardState } from "@/lib/quote/types";
 import { DocumentPanel, SharePanel } from "./DocumentPanel";
 import { MarginPanel } from "./MarginPanel";
 import { MarginBar } from "../MarginBar";
@@ -24,6 +25,7 @@ interface Props {
   warnings: string[];
   documentOptions: DocumentOptions;
   companyDepositRate: number;
+  priceNotices?: WizardState["priceNotices"];
 }
 
 const VAT_OPTIONS = [
@@ -32,7 +34,7 @@ const VAT_OPTIONS = [
   { value: "0.2", label: "TVA 20 %" },
 ];
 
-export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate }: Props) {
+export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate, priceNotices }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
@@ -50,6 +52,29 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
 
   return (
     <div className="space-y-6">
+      {priceNotices && priceNotices.items.length > 0 && (
+        <Card title={`Copie de ${priceNotices.sourceNumber} : prix à vérifier`}>
+          <p className="text-base text-slate-700">Les prix ont été recalculés avec votre catalogue actuel. Vos retouches manuelles sont conservées.</p>
+          <ul className="space-y-2 text-base">
+            {priceNotices.items.map((n, i) => (
+              <li key={i} className={n.kind === "override_kept" ? "font-semibold text-danger" : ""}>
+                {n.kind === "updated" ? (
+                  <>
+                    {n.designation} : {formatEuros(n.fromCents)} → <strong>{formatEuros(n.toCents)}</strong>
+                  </>
+                ) : (
+                  <>
+                    ⚠ {n.designation} : prix d&apos;achat {formatEuros(n.fromCents)} → {formatEuros(n.toCents)}, votre prix retouché de {formatEuros(n.keptSaleCents ?? 0)} est conservé : vérifiez la marge.
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+          <Button type="button" variant="secondary" full disabled={pending} onClick={() => run(() => dismissPriceNotices(quoteId))}>
+            J&apos;ai vérifié
+          </Button>
+        </Card>
+      )}
       {result.alerts.map((a) => (
         <Notice key={a.message} tone="danger">
           ⚠ {a.message}

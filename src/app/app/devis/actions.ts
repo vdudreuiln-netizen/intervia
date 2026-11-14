@@ -8,6 +8,7 @@ import { computeQuote, roundToPsychologicalPrice, type QuoteDiscount } from "@/l
 import { parseDecimal, parseEuros, parsePercent } from "@/lib/format";
 import { applyEdits, parseFreeLine, recordOverride, recordRemoval, type FreeLineForm } from "@/lib/quote/edits";
 import { documentWarnings, validateSchedule } from "@/lib/pdf/document";
+import { priceNotices, remapIds } from "@/lib/quote/duplicate";
 import { parseClientSite, type ClientSiteErrors, type ClientSiteForm } from "@/lib/quote/client";
 import { calcContext } from "@/lib/quote/context";
 import { fromSelection } from "@/lib/quote/equipment";
@@ -383,4 +384,121 @@ export async function setQuoteStatus(quoteId: string, status: "brouillon" | "env
   revalidatePath("/app");
   const labels = { brouillon: "Repassé en brouillon", envoye: "Marqué comme envoyé ✔", accepte: "Devis accepté ✔", refuse: "Devis refusé" };
   return { ok: true, message: labels[status] };
+}
+
+// ---------------------------------------------------------------------------
+// Duplication et relances
+// ---------------------------------------------------------------------------
+
+/**
+ * Copie un devis en nouveau brouillon. Les prix sont recalculés avec le
+ * catalogue ACTUEL ; les retouches manuelles sont conservées ; les écarts de
+ * prix sont signalés sur la copie.
+ */
+export async function duplicateQuote(sourceId: string, target: { mode: "same" | "other"; clientName?: string }): Promise<{ ok: boolean; id?: string; next?: string; message?: string }> {
+  const { supabase, company } = await getCurrentCompany();
+  const src = await loadQuote(supabase, sourceId);
+  if (!src) return { ok: false, message: "Devis introuvable." };
+  if (target.mode === "other" && !target.clientName?.trim()) return { ok: false, message: "Indiquez le nom du nouveau client." };
+  const srcLines = await loadQuoteLines(supabase, sourceId);
+
+  // Client et chantier
+  let clientId = src.project.client.id;
+  if (target.mode === "other") {
+    const { data, error } = await supabase.from("clients").insert({ company_id: company.id, name: target.clientName!.trim() }).select("id").single();
+    if (error) return { ok: false, message: FAIL };
+    clientId = data.id;
+  }
+  const p = src.project;
+  const site =
+    target.mode === "same"
+      ? { site_address: p.site_address, site_postal_code: p.site_postal_code, site_city: p.site_city, site_citycode: p.site_citycode, site_lat: p.site_lat, site_lng: p.site_lng, one_way_km: p.one_way_km, same_commune: p.same_commune, parking_enabled: p.parking_enabled, parking_per_day_cents: p.parking_per_day_cents }
+      : {};
+  const { data: project, error: e1 } = await supabase.from("projects").insert({ company_id: company.id, client_id: clientId, gainable_access: p.gainable_access, ...site }).select("id").single();
+  if (e1) return { ok: false, message: FAIL };
+
+  // Pièces (nouveaux identifiants) et état de l'assistant renuméroté
+  const idMap = new Map<string, string>();
+  for (const [i, r] of src.rooms.entries()) {
+    const { id: oldId, ...row } = r;
+    const { data, error } = await supabase.from("rooms").insert({ ...row, position: i, company_id: company.id, project_id: project.id }).select("id").single();
+    if (error) return { ok: false, message: FAIL };
+    idMap.set(oldId, data.id);
+  }
+  const wizard: WizardState = remapIds({ ...src.wizard, priceNotices: undefined }, idMap);
+
+  const d = src.document;
+  const { data: copy, error: e2 } = await supabase
+    .from("quotes")
+    .insert({
+      company_id: company.id,
+      project_id: project.id,
+      vat_regime: company.vat_regime,
+      validity_days: company.quote_validity_days,
+      payment_terms: company.payment_terms,
+      wizard,
+      labor_days: src.laborDays,
+      discount_kind: src.discount?.kind ?? null,
+      discount_value: src.discount?.value ?? null,
+      presentation: d.presentation,
+      signed_off_premises: d.signedOffPremises,
+      early_start: d.earlyStart,
+      urgent_repair: d.urgentRepair,
+      deposit_rate: d.depositRate,
+      payment_schedule: d.schedule,
+      duplicated_from: sourceId,
+    })
+    .select("id, number")
+    .single();
+  if (e2) return { ok: false, message: FAIL };
+
+  // Lignes libres recopiées telles quelles
+  const manual = srcLines.filter((l) => l.origin === "manual");
+  if (manual.length) {
+    const { error } = await supabase.from("quote_lines").insert(
+      manual.map((l, i) => ({
+        company_id: company.id,
+        quote_id: copy.id,
+        position: 1000 + i,
+        kind: l.kind,
+        origin: "manual",
+        designation: l.designation,
+        quantity: l.quantity,
+        unit: l.unit,
+        unit_purchase_cents: l.unitPurchaseCents,
+        unit_sale_cents: l.unitSaleCents,
+        vat_rate: company.vat_regime === "franchise" ? 0 : l.vatRate,
+      })),
+    );
+    if (error) return { ok: false, message: FAIL };
+  }
+
+  revalidatePath("/app");
+  if (!wizard.selection) return { ok: true, id: copy.id, next: `/app/devis/${copy.id}?etape=1` };
+
+  // Regénération avec le catalogue actuel, retouches conservées
+  const f = await finalizeQuote(copy.id, "keep");
+  if (!f.ok) return { ok: true, id: copy.id, next: `/app/devis/${copy.id}?etape=4`, message: f.message };
+  const after = await loadQuoteLines(supabase, copy.id);
+  const before = srcLines.map((l) => ({ ...l, wizardKey: l.wizardKey ? remapIds(l.wizardKey, idMap) : null }));
+  const items = priceNotices(before, after, wizard.edits);
+  if (items.length) await supabase.from("quotes").update({ wizard: { ...wizard, priceNotices: { sourceNumber: src.number, items } } }).eq("id", copy.id);
+
+  // Autre client : il faut renseigner son adresse (frais de déplacement) puis revalider
+  return { ok: true, id: copy.id, next: target.mode === "other" ? `/app/devis/${copy.id}?etape=1` : `/app/devis/${copy.id}/apercu` };
+}
+
+export async function dismissPriceNotices(quoteId: string): Promise<{ ok: boolean; message?: string }> {
+  return saveWizard(quoteId, { priceNotices: undefined });
+}
+
+/** Note la date de relance (après le partage du message au client). */
+export async function recordFollowUp(quoteId: string): Promise<{ ok: boolean; message?: string }> {
+  const { supabase } = await getCurrentCompany();
+  const { data: q } = await supabase.from("quotes").select("follow_up_count").eq("id", quoteId).maybeSingle();
+  if (!q) return { ok: false, message: "Devis introuvable." };
+  const { error } = await supabase.from("quotes").update({ last_follow_up_at: new Date().toISOString(), follow_up_count: (q.follow_up_count ?? 0) + 1 }).eq("id", quoteId);
+  if (error) return { ok: false, message: FAIL };
+  revalidatePath("/app");
+  return { ok: true, message: "Relance notée ✔" };
 }

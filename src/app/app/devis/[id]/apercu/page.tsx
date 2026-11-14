@@ -49,6 +49,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
             schedule: q.document.schedule,
           }}
           companyDepositRate={company.deposit_rate}
+          priceNotices={q.wizard.priceNotices}
         />
       )}
     </div>

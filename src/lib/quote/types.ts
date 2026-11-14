@@ -151,7 +151,20 @@ export interface QuoteEdits {
 
 export const EMPTY_EDITS: QuoteEdits = { overrides: {}, removed: [] };
 
+/** Écart de prix constaté lors de la copie d'un devis (catalogue actuel vs devis d'origine). */
+export interface PriceNotice {
+  designation: string;
+  /** « updated » : prix de vente mis à jour ; « override_kept » : prix d'achat changé, votre prix retouché est conservé. */
+  kind: "updated" | "override_kept";
+  fromCents: number;
+  toCents: number;
+  /** Prix de vente conservé (retouche). */
+  keptSaleCents?: number;
+}
+
 export interface WizardState {
+  /** Devis copié : écarts de prix à vérifier. */
+  priceNotices?: { sourceNumber: string; items: PriceNotice[] };
   edits?: QuoteEdits;
   selection?: SavedSelection;
   metre?: Metre;

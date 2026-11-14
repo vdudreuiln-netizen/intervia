@@ -44,6 +44,7 @@ export interface CompanyRow {
   mediator_address: string | null;
   mediator_website: string | null;
   deposit_rate: number;
+  follow_up_days: number;
   accessory_purchase_coefficient: number;
   preferred_brand_id: string | null;
   commissioning_price_cents: number;
@@ -76,7 +77,7 @@ export const STEPS: { id: StepId; title: string; fields: CompanyField[] }[] = [
   { id: "assurance", title: "Assurance et banque", fields: ["insurer_name", "insurance_policy", "insurance_coverage", "bank_holder", "iban", "bic"] },
   { id: "mentions", title: "Médiateur de la consommation", fields: ["mediator_name", "mediator_address", "mediator_website"] },
   { id: "tva", title: "TVA et charges", fields: ["vat_regime", "vat_number", "default_vat_rate", "labor_charges_rate", "material_charges_rate"] },
-  { id: "main_oeuvre", title: "Prix, main d'œuvre et marge", fields: ["daily_labor_rate_cents", "accessory_sale_coefficient", "accessory_purchase_coefficient", "target_margin_per_day_cents", "deposit_rate", "quote_validity_days", "payment_terms"] },
+  { id: "main_oeuvre", title: "Prix, main d'œuvre et marge", fields: ["daily_labor_rate_cents", "accessory_sale_coefficient", "accessory_purchase_coefficient", "target_margin_per_day_cents", "deposit_rate", "quote_validity_days", "follow_up_days", "payment_terms"] },
   { id: "chantier", title: "Chantier et mise en service", fields: ["preferred_brand_id", "commissioning_price_cents", "fluid_form_policy", "fluid_form_price_cents", "default_electric_length_m"] },
   {
     id: "deplacement",
@@ -247,6 +248,12 @@ export function parseCompanyForm(form: Partial<CompanyForm>, fields: CompanyFiel
         const n = parseDecimal(raw === "" ? (k === "accessory_sale_coefficient" ? "1,3" : "2") : raw);
         if (n === null || n <= 0 || n > 5) errors[k] = "Coefficient entre 0,01 et 5";
         else set(k, n);
+        break;
+      }
+      case "follow_up_days": {
+        const n = parseDecimal(raw === "" ? "7" : raw);
+        if (n === null || !Number.isInteger(n) || n < 1 || n > 90) errors.follow_up_days = "Nombre de jours entre 1 et 90";
+        else set("follow_up_days", n);
         break;
       }
       case "quote_validity_days": {

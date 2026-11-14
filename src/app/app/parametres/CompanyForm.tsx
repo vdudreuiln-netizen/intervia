@@ -178,6 +178,15 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brand
         <MoneyField label="Objectif de marge nette par jour de chantier" value={form.target_margin_per_day_cents} onChange={set("target_margin_per_day_cents")} error={e.target_margin_per_day_cents} hint="Une alerte rouge s'affiche si un devis passe en dessous" />
         <PercentField label="Acompte demandé" value={form.deposit_rate} onChange={set("deposit_rate")} error={e.deposit_rate} hint="30 % par défaut, modifiable sur chaque devis. Devis signé chez le client : payable 7 jours après la signature (art. L221-10)." />
         <Field label="Validité des devis" value={form.quote_validity_days} onChange={set("quote_validity_days")} error={e.quote_validity_days} inputMode="numeric" suffix="jours" />
+        <Field
+          label="Relancer un devis envoyé sans réponse après"
+          value={form.follow_up_days}
+          onChange={set("follow_up_days")}
+          error={e.follow_up_days}
+          inputMode="numeric"
+          suffix="jours"
+          hint="7 jours conseillés : en clim, le client compare vite plusieurs devis"
+        />
         <TextArea label="Conditions de paiement" value={form.payment_terms} onChange={set("payment_terms")} error={e.payment_terms} hint="Imprimées sur chaque devis" />
       </>
     ),
