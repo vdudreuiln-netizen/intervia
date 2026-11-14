@@ -40,6 +40,10 @@ export interface CompanyRow {
   material_charges_rate: number;
   daily_labor_rate_cents: number;
   accessory_sale_coefficient: number;
+  mediator_name: string | null;
+  mediator_address: string | null;
+  mediator_website: string | null;
+  deposit_rate: number;
   accessory_purchase_coefficient: number;
   preferred_brand_id: string | null;
   commissioning_price_cents: number;
@@ -64,14 +68,15 @@ export interface CompanyRow {
 export type CompanyField = keyof CompanyRow;
 export type CompanyForm = Record<CompanyField, string>;
 
-export type StepId = "entreprise" | "visuels" | "assurance" | "tva" | "main_oeuvre" | "chantier" | "deplacement";
+export type StepId = "entreprise" | "visuels" | "assurance" | "mentions" | "tva" | "main_oeuvre" | "chantier" | "deplacement";
 
 export const STEPS: { id: StepId; title: string; fields: CompanyField[] }[] = [
   { id: "entreprise", title: "Votre entreprise", fields: ["legal_name", "siret", "address_line", "postal_code", "city", "phone", "email"] },
   { id: "visuels", title: "Logo et tampon", fields: ["logo_path", "stamp_path"] },
   { id: "assurance", title: "Assurance et banque", fields: ["insurer_name", "insurance_policy", "insurance_coverage", "bank_holder", "iban", "bic"] },
+  { id: "mentions", title: "Médiateur de la consommation", fields: ["mediator_name", "mediator_address", "mediator_website"] },
   { id: "tva", title: "TVA et charges", fields: ["vat_regime", "vat_number", "default_vat_rate", "labor_charges_rate", "material_charges_rate"] },
-  { id: "main_oeuvre", title: "Prix, main d'œuvre et marge", fields: ["daily_labor_rate_cents", "accessory_sale_coefficient", "accessory_purchase_coefficient", "target_margin_per_day_cents", "quote_validity_days", "payment_terms"] },
+  { id: "main_oeuvre", title: "Prix, main d'œuvre et marge", fields: ["daily_labor_rate_cents", "accessory_sale_coefficient", "accessory_purchase_coefficient", "target_margin_per_day_cents", "deposit_rate", "quote_validity_days", "payment_terms"] },
   { id: "chantier", title: "Chantier et mise en service", fields: ["preferred_brand_id", "commissioning_price_cents", "fluid_form_policy", "fluid_form_price_cents", "default_electric_length_m"] },
   {
     id: "deplacement",
@@ -90,7 +95,7 @@ const CENTS: CompanyField[] = [
   "parking_per_day_cents",
   "travel_min_daily_with_parking_cents",
 ];
-const RATES: CompanyField[] = ["labor_charges_rate", "material_charges_rate", "default_vat_rate"];
+const RATES: CompanyField[] = ["labor_charges_rate", "material_charges_rate", "default_vat_rate", "deposit_rate"];
 
 export function companyRowToForm(row: CompanyRow): CompanyForm {
   const form = {} as CompanyForm;
@@ -189,6 +194,16 @@ export function parseCompanyForm(form: Partial<CompanyForm>, fields: CompanyFiel
         else set("default_vat_rate", r);
         break;
       }
+      case "deposit_rate": {
+        const r = parsePercent(raw === "" ? "0" : raw);
+        if (r === null || r < 0 || r >= 1) errors.deposit_rate = "Pourcentage entre 0 et 99 %";
+        else set("deposit_rate", r);
+        break;
+      }
+      case "mediator_website":
+        if (raw !== "" && !/^(https?:\/\/)?[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(raw)) errors.mediator_website = "Adresse de site invalide (ex. www.mediateur.fr)";
+        else set("mediator_website", textOrNull(k));
+        break;
       case "labor_charges_rate":
       case "material_charges_rate": {
         const r = parsePercent(raw);

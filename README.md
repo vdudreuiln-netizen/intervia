@@ -14,7 +14,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 3 | Catalogue : import Excel/CSV, remises, coefficients, historique des prix | ✅ |
 | 4 | Assistant devis : client, pièces, puissances, solutions Éco/Confort/Premium, métré, main d'œuvre | ✅ |
 | 5 | Éditeur de devis : retouches, lignes libres, remise, panneau « Ma marge », arrondi | ✅ |
-| 6 | PDF du devis | à faire |
+| 6 | PDF du devis : modes particulier / détaillé, mentions légales, acompte, rétractation, partage | ✅ |
 | 7 | Tableau de bord | à faire |
 | 8 | Abonnement Stripe | à faire |
 
@@ -29,6 +29,7 @@ src/lib/company/       paramètres entreprise : validation (SIRET, IBAN, TVA…)
 src/lib/catalog/       import de tarifs (CSV, xlsx), plan d'import, formulaires du catalogue
 src/lib/geo/           géocodage et distance routière (Géoplateforme IGN), détection « même commune »
 src/lib/quote/         assistant devis : choix du matériel, options, lignes, métré (pur, testé)
+src/lib/pdf/           modèle du devis imprimé (pur, testé) et rendu PDF (@react-pdf/renderer)
 src/app/               écrans (connexion, onboarding /app/bienvenue, /app/parametres)
 ```
 
@@ -97,5 +98,17 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
   à chaque mise en service, par défaut — réglementation — ou seulement si complément), réseau aéraulique et zonage pour le gainable.
 - Les lignes du devis sont recalculées côté serveur à partir du catalogue en base.
 - Multi-split : Σ puissances intérieures ≤ 130 % de l'unité extérieure (modifiable par modèle).
+
+## Devis imprimé (PDF)
+
+- Généré côté serveur à chaque ouverture (`/app/devis/[id]/pdf`) : il reflète toujours les dernières retouches.
+- Aucune donnée de marge, de coût d'achat ni de charges dans le modèle du document (vérifié par un test).
+- « Client particulier » : Fourniture (matériel + accessoires, détail sans prix), Main d'œuvre, Mise en
+  service et contrôle d'étanchéité (avec la fiche fluides), prestations libres, Déplacement, Remise commerciale.
+- Mentions : devis gratuit et validité, décennale (assureur, contrat, zone), médiateur de la consommation,
+  TVA ou art. 293 B, RIB en pied de page, « Bon pour accord. Devis reçu avant l'exécution des travaux ».
+- Signé chez le client : information 14 jours + formulaire de rétractation détachable ; acompte payable
+  7 jours après la signature (art. L221-10). Option démarrage anticipé (L221-25) et dépannage urgent (L221-28 8°).
+- Médiateur, SIRET ou décennale manquant : bandeau rouge sur le PDF et passage en « Envoyé » bloqué.
 
 > Le dimensionnement W/m³ est un ordre de grandeur pour chiffrer, pas un bilan thermique réglementaire.

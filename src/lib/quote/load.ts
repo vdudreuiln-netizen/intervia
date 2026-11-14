@@ -94,6 +94,18 @@ export interface QuoteRecord {
   laborDays: number;
   discount: QuoteDiscount | null;
   vatRegime: "franchise" | "assujetti";
+  document: {
+    issueDate: string;
+    validityDays: number;
+    presentation: "particulier" | "detaille";
+    signedOffPremises: boolean;
+    earlyStart: boolean;
+    urgentRepair: boolean;
+    depositRate: number | null;
+    schedule: { label: string; rate: number }[] | null;
+    sentAt: string | null;
+    decidedAt: string | null;
+  };
   project: {
     id: string;
     site_address: string | null;
@@ -116,7 +128,7 @@ export async function loadQuote(supabase: SupabaseClient, id: string): Promise<Q
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const { data: q } = await supabase
     .from("quotes")
-    .select("id, number, status, wizard, labor_days, discount_kind, discount_value, vat_regime, projects(id, site_address, site_postal_code, site_city, site_citycode, site_lat, site_lng, one_way_km, same_commune, parking_enabled, parking_per_day_cents, gainable_access, clients(id, name, email, phone, address_line, postal_code, city))")
+    .select("id, number, status, wizard, labor_days, discount_kind, discount_value, vat_regime, issue_date, validity_days, presentation, signed_off_premises, early_start, urgent_repair, deposit_rate, payment_schedule, sent_at, decided_at, projects(id, site_address, site_postal_code, site_city, site_citycode, site_lat, site_lng, one_way_km, same_commune, parking_enabled, parking_per_day_cents, gainable_access, clients(id, name, email, phone, address_line, postal_code, city))")
     .eq("id", id)
     .maybeSingle();
   if (!q) return null;
@@ -130,6 +142,18 @@ export async function loadQuote(supabase: SupabaseClient, id: string): Promise<Q
     laborDays: Number(q.labor_days),
     discount: q.discount_kind ? { kind: q.discount_kind as QuoteDiscount["kind"], value: Number(q.discount_value) } : null,
     vatRegime: q.vat_regime,
+    document: {
+      issueDate: q.issue_date,
+      validityDays: q.validity_days,
+      presentation: q.presentation,
+      signedOffPremises: q.signed_off_premises,
+      earlyStart: q.early_start,
+      urgentRepair: q.urgent_repair,
+      depositRate: q.deposit_rate === null ? null : Number(q.deposit_rate),
+      schedule: q.payment_schedule as { label: string; rate: number }[] | null,
+      sentAt: q.sent_at,
+      decidedAt: q.decided_at,
+    },
     project: {
       id: p.id as string,
       site_address: (p.site_address as string | null) ?? null,

@@ -7,7 +7,8 @@ import { centsToInput, decimalToInput, formatEuros, formatPercent, parseDecimal,
 import { computeQuote, maxDiscount, type PricingSettings, type QuoteDiscount, type PricedLine } from "@/lib/pricing/engine";
 import type { FreeLineForm } from "@/lib/quote/edits";
 import type { QuoteLineRow } from "@/lib/quote/load";
-import { addFreeLine, deleteLine, roundQuote, setDiscount, setQuoteCoefficients, updateLine } from "../../actions";
+import { addFreeLine, deleteLine, roundQuote, setDiscount, setQuoteCoefficients, updateLine, type DocumentOptions } from "../../actions";
+import { DocumentPanel, SharePanel } from "./DocumentPanel";
 import { MarginPanel } from "./MarginPanel";
 import { MarginBar } from "../MarginBar";
 
@@ -18,6 +19,11 @@ interface Props {
   discount: QuoteDiscount | null;
   settings: PricingSettings;
   coefficients: { material: number | null; accessory: number | null; companyAccessory: number };
+  number: string;
+  status: "brouillon" | "envoye" | "accepte" | "refuse";
+  warnings: string[];
+  documentOptions: DocumentOptions;
+  companyDepositRate: number;
 }
 
 const VAT_OPTIONS = [
@@ -26,7 +32,7 @@ const VAT_OPTIONS = [
   { value: "0.2", label: "TVA 20 %" },
 ];
 
-export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients }: Props) {
+export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
@@ -65,6 +71,9 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
       <DiscountForm discount={discount} max={max} grossHt={result.grossHtCents} pending={pending} onApply={(d) => run(() => setDiscount(quoteId, d), d ? "Remise appliquée ✔" : "Remise retirée ✔")} />
       <FreeLineFormCard assujetti={assujetti} pending={pending} onAdd={(f) => addFreeLine(quoteId, f)} onDone={() => router.refresh()} />
       <CoefficientsForm coefficients={coefficients} pending={pending} onApply={(m, a) => run(() => setQuoteCoefficients(quoteId, m, a), "Prix recalculés avec les coefficients du devis ✔ (vos retouches sont conservées)")} />
+
+      <DocumentPanel quoteId={quoteId} options={documentOptions} companyDepositRate={companyDepositRate} />
+      <SharePanel quoteId={quoteId} number={number} status={status} warnings={warnings} />
 
       <LinkButton href={`/app/devis/${quoteId}?etape=4`} variant="secondary" full>
         Relancer l&apos;assistant (solutions, métré…)

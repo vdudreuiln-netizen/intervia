@@ -5,7 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import { ASSETS_BUCKET } from "@/lib/supabase/env";
 
 const MAX_BYTES = 2 * 1024 * 1024;
-const TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+// PNG ou JPG uniquement : le moteur PDF ne lit pas le WebP
+const TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg" };
 
 /** Envoi d'une image (logo, tampon) dans le dossier privé de l'entreprise. */
 export function ImageUpload({
@@ -32,7 +33,7 @@ export function ImageUpload({
   async function upload(file: File) {
     setError(null);
     const ext = TYPES[file.type];
-    if (!ext) return setError("Format accepté : PNG, JPG ou WebP.");
+    if (!ext) return setError("Format accepté : PNG ou JPG.");
     if (file.size > MAX_BYTES) return setError("Image trop lourde : 2 Mo maximum.");
     setBusy(true);
     try {
@@ -72,7 +73,7 @@ export function ImageUpload({
       ) : (
         <label className="flex min-h-24 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-brand bg-brand-light px-4 text-center text-lg font-bold text-brand">
           {busy ? "Envoi en cours…" : "📷 Choisir ou prendre une photo"}
-          <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" disabled={busy} onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
+          <input type="file" accept="image/png,image/jpeg" className="sr-only" disabled={busy} onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
         </label>
       )}
       {error && <p role="alert" className="mt-1 text-base font-bold text-danger">{error}</p>}

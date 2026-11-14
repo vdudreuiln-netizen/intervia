@@ -7,6 +7,7 @@ import { roadDistance } from "@/lib/geo/route";
 import { computeQuote, roundToPsychologicalPrice, type QuoteDiscount } from "@/lib/pricing/engine";
 import { parseDecimal, parseEuros, parsePercent } from "@/lib/format";
 import { applyEdits, parseFreeLine, recordOverride, recordRemoval, type FreeLineForm } from "@/lib/quote/edits";
+import { documentWarnings, validateSchedule } from "@/lib/pdf/document";
 import { parseClientSite, type ClientSiteErrors, type ClientSiteForm } from "@/lib/quote/client";
 import { calcContext } from "@/lib/quote/context";
 import { fromSelection } from "@/lib/quote/equipment";
@@ -324,4 +325,62 @@ export async function setQuoteCoefficients(quoteId: string, material: number | n
   const s = await saveWizard(quoteId, { materialCoefficient: material, accessoryCoefficient: accessory });
   if (!s.ok) return s;
   return finalizeQuote(quoteId, "keep");
+}
+
+// ---------------------------------------------------------------------------
+// Document client et statut
+// ---------------------------------------------------------------------------
+
+export interface DocumentOptions {
+  presentation: "particulier" | "detaille";
+  signedOffPremises: boolean;
+  earlyStart: boolean;
+  urgentRepair: boolean;
+  depositRate: number | null; // null = taux des paramètres
+  schedule: { label: string; rate: number }[] | null;
+}
+
+export async function setDocumentOptions(quoteId: string, o: DocumentOptions): Promise<{ ok: boolean; message?: string }> {
+  const { supabase } = await getCurrentCompany();
+  if (o.presentation !== "particulier" && o.presentation !== "detaille") return { ok: false, message: "Présentation invalide." };
+  if (o.depositRate !== null && !(o.depositRate >= 0 && o.depositRate < 1)) return { ok: false, message: "Acompte entre 0 et 99 %." };
+  if (o.schedule) {
+    const e = validateSchedule(o.schedule);
+    if (e) return { ok: false, message: e };
+  }
+  const { error } = await supabase
+    .from("quotes")
+    .update({
+      presentation: o.presentation,
+      signed_off_premises: o.signedOffPremises,
+      early_start: o.signedOffPremises && !o.urgentRepair && o.earlyStart,
+      urgent_repair: o.urgentRepair,
+      deposit_rate: o.depositRate,
+      payment_schedule: o.schedule,
+    })
+    .eq("id", quoteId);
+  if (error) return { ok: false, message: FAIL };
+  revalidatePath(`/app/devis/${quoteId}/apercu`);
+  return { ok: true, message: "Réglages du document enregistrés ✔" };
+}
+
+/** Statut à la main : envoyé (bloqué si le devis n'est pas conforme), accepté, refusé, brouillon. */
+export async function setQuoteStatus(quoteId: string, status: "brouillon" | "envoye" | "accepte" | "refuse"): Promise<{ ok: boolean; message?: string }> {
+  const { supabase, company } = await getCurrentCompany();
+  if (!["brouillon", "envoye", "accepte", "refuse"].includes(status)) return { ok: false, message: "Statut invalide." };
+  if (status === "envoye") {
+    const w = documentWarnings(company);
+    if (w.length) return { ok: false, message: `Envoi bloqué : ${w.join(" ; ")}.` };
+  }
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { status };
+  if (status === "envoye") patch.sent_at = now;
+  if (status === "accepte" || status === "refuse") patch.decided_at = now;
+  if (status === "brouillon") Object.assign(patch, { sent_at: null, decided_at: null });
+  const { error } = await supabase.from("quotes").update(patch).eq("id", quoteId);
+  if (error) return { ok: false, message: FAIL };
+  revalidatePath(`/app/devis/${quoteId}/apercu`);
+  revalidatePath("/app");
+  const labels = { brouillon: "Repassé en brouillon", envoye: "Marqué comme envoyé ✔", accepte: "Devis accepté ✔", refuse: "Devis refusé" };
+  return { ok: true, message: labels[status] };
 }

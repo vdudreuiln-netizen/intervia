@@ -102,6 +102,18 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brand
         <Field label="BIC" value={form.bic} onChange={set("bic")} error={e.bic} autoCapitalize="characters" />
       </>
     ),
+    mentions: (
+      <>
+        <p className="text-base text-slate-700">
+          Obligatoire sur tout devis à un particulier : sans médiateur, le contrat peut être annulé. Vous adhérez à un médiateur agréé (liste sur economie.gouv.fr/mediation-conso).
+        </p>
+        {mode === "settings" && !form.mediator_name && <Notice tone="danger">Médiateur manquant : vos devis portent un bandeau rouge « ne pas envoyer ».</Notice>}
+        <Field label="Nom du médiateur" value={form.mediator_name} onChange={set("mediator_name")} error={e.mediator_name} />
+        <Field label="Adresse postale du médiateur" value={form.mediator_address} onChange={set("mediator_address")} error={e.mediator_address} />
+        <Field label="Site internet du médiateur" value={form.mediator_website} onChange={set("mediator_website")} error={e.mediator_website} inputMode="url" placeholder="www.…" />
+        {mode === "onboarding" && <p className="text-base text-slate-600">Pas encore de médiateur ? Vous pourrez le renseigner plus tard dans les paramètres.</p>}
+      </>
+    ),
     tva: (
       <>
         <Choice
@@ -164,6 +176,7 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brand
         />
         <p className="text-base text-slate-600">Le coefficient du matériel (prix public × coefficient) se règle par marque, dans le catalogue.</p>
         <MoneyField label="Objectif de marge nette par jour de chantier" value={form.target_margin_per_day_cents} onChange={set("target_margin_per_day_cents")} error={e.target_margin_per_day_cents} hint="Une alerte rouge s'affiche si un devis passe en dessous" />
+        <PercentField label="Acompte demandé" value={form.deposit_rate} onChange={set("deposit_rate")} error={e.deposit_rate} hint="30 % par défaut, modifiable sur chaque devis. Devis signé chez le client : payable 7 jours après la signature (art. L221-10)." />
         <Field label="Validité des devis" value={form.quote_validity_days} onChange={set("quote_validity_days")} error={e.quote_validity_days} inputMode="numeric" suffix="jours" />
         <TextArea label="Conditions de paiement" value={form.payment_terms} onChange={set("payment_terms")} error={e.payment_terms} hint="Imprimées sur chaque devis" />
       </>
