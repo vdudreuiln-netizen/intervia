@@ -49,6 +49,20 @@ export function ProductEditor({ id, initial, brands }: { id: string | null; init
             <Field label="Froid" value={form.cooling_kw} onChange={set("cooling_kw")} error={errors.cooling_kw} inputMode="decimal" suffix="kW" />
             <Field label="Chaud" value={form.heating_kw} onChange={set("heating_kw")} error={errors.heating_kw} inputMode="decimal" suffix="kW" />
           </div>
+          <Field
+            label="Diamètres des liaisons (liquide - gaz)"
+            value={form.link_diameters}
+            onChange={set("link_diameters")}
+            error={errors.link_diameters}
+            placeholder="1/4 - 3/8"
+            hint="Selon la notice. Vide = règle par défaut selon la puissance."
+          />
+          {(form.type === "ue_mono" || form.type === "ue_multi") && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Longueur pré-chargée" value={form.precharged_length_m} onChange={set("precharged_length_m")} error={errors.precharged_length_m} inputMode="decimal" suffix="m" />
+              <Field label="Complément de charge" value={form.extra_charge_g_per_m} onChange={set("extra_charge_g_per_m")} error={errors.extra_charge_g_per_m} inputMode="numeric" suffix="g/m" />
+            </div>
+          )}
           {form.type === "ue_multi" && (
             <>
               <Field label="Nombre de sorties max" value={form.max_outlets} onChange={set("max_outlets")} error={errors.max_outlets} inputMode="numeric" />

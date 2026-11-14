@@ -30,6 +30,8 @@ export interface SizingCoefficients {
   /** Plage acceptable de puissance froid d'une unité par rapport au besoin. */
   unitMinRatio: number;
   unitMaxRatio: number;
+  /** Multi-split : l'unité extérieure doit couvrir Σ besoins × ce coefficient (1 = toutes les pièces à pleine charge). */
+  multiSimultaneity: number;
 }
 
 export const DEFAULT_SIZING: SizingCoefficients = {
@@ -39,6 +41,7 @@ export const DEFAULT_SIZING: SizingCoefficients = {
   largeGlazing: 1.15,
   unitMinRatio: 0.95,
   unitMaxRatio: 1.6,
+  multiSimultaneity: 1,
 };
 
 export const INSULATION_LABELS: Record<Insulation, string> = {
@@ -114,6 +117,8 @@ export interface LaborDaysParams {
   commissioning: number;
   /** Arrondi au demi-jour supérieur. */
   roundTo: number;
+  /** Gainable avec zonage : temps par pièce zonée. */
+  zoningPerRoom: number;
 }
 
 export const DEFAULT_LABOR_DAYS: LaborDaysParams = {
@@ -123,6 +128,7 @@ export const DEFAULT_LABOR_DAYS: LaborDaysParams = {
   includedLinkMetersPerIndoor: 5,
   commissioning: 0.25,
   roundTo: 0.5,
+  zoningPerRoom: 0.25,
 };
 
 export interface InstallationSummary {

@@ -12,7 +12,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 1 | Schéma de base + moteur de calcul + tests | ✅ |
 | 2 | Paramètres de l'entreprise (onboarding) + coefficients | ✅ |
 | 3 | Catalogue : import Excel/CSV, remises, coefficients, historique des prix | ✅ |
-| 4 | Assistant projet / devis (6 étapes) | à faire |
+| 4 | Assistant devis : client, pièces, puissances, solutions Éco/Confort/Premium, métré, main d'œuvre | ✅ |
 | 5 | Panneau « Ma marge » + arrondi | à faire |
 | 6 | PDF du devis | à faire |
 | 7 | Tableau de bord | à faire |
@@ -27,7 +27,8 @@ src/lib/pricing/       moteur de prix et de marge (UNIQUE endroit où l'on calcu
 src/lib/sizing/        dimensionnement W/m³, multi-split, jours de pose, coefficients modifiables
 src/lib/company/       paramètres entreprise : validation (SIRET, IBAN, TVA…), conversion formulaire ↔ base
 src/lib/catalog/       import de tarifs (CSV, xlsx), plan d'import, formulaires du catalogue
-src/lib/geo/           géocodage (Géoplateforme IGN) et détection « même commune »
+src/lib/geo/           géocodage et distance routière (Géoplateforme IGN), détection « même commune »
+src/lib/quote/         assistant devis : choix du matériel, options, lignes, métré (pur, testé)
 src/app/               écrans (connexion, onboarding /app/bienvenue, /app/parametres)
 ```
 
@@ -80,6 +81,16 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
   modifiable par devis) ; achat = prix public × (1 − remise).
 - Import de tarif : mise à jour par marque + référence (sans doublon), remise conservée si le fichier
   n'en contient pas, historique daté de chaque changement de prix (trigger SQL), import tout-ou-rien.
+- Solutions : mono / multi / gainable, une seule marque par option. Éco = prix client le plus bas,
+  Confort = meilleure marge nette (parmi les options sans alerte quand il y en a), Premium = marque
+  préférée ; options identiques fusionnées. Multi au-delà des sorties : 2 UE (avertissement).
+  Gainable si combles accessibles ; 2 gainables si 2 niveaux ou puissance > plus grosse gainable.
+- Lignes générées par unité (toutes décochables) : liaison au diamètre de la fiche produit (sinon règle
+  ≤ 3,5 kW 1/4-3/8, ≤ 5 kW 1/4-1/2, au-delà 3/8-5/8), goulotte, condensats, câble de liaison, pompe
+  (option), support mural OU sol, ligne électrique, disjoncteur, complément de charge au-delà de la
+  longueur pré-chargée (arrondi au 0,1 kg), mise en service, fiche CERFA 15497*04 (si complément ou
+  à chaque mise en service, réglable), réseau aéraulique et zonage pour le gainable.
+- Les lignes du devis sont recalculées côté serveur à partir du catalogue en base.
 - Multi-split : Σ puissances intérieures ≤ 130 % de l'unité extérieure (modifiable par modèle).
 
 > Le dimensionnement W/m³ est un ordre de grandeur pour chiffrer, pas un bilan thermique réglementaire.

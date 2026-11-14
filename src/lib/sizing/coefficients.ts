@@ -35,6 +35,7 @@ export const COEF_FIELDS: CoefField[] = [
   { group: "Autres corrections", path: "sizing.largeGlazing", label: "Vitrage important", unit: "×", min: 1, max: 2 },
   { group: "Choix des unités", path: "sizing.unitMinRatio", label: "Puissance mini de l'unité / besoin", unit: "×", min: 0.5, max: 1.5 },
   { group: "Choix des unités", path: "sizing.unitMaxRatio", label: "Puissance maxi de l'unité / besoin", unit: "×", min: 1, max: 3 },
+  { group: "Choix des unités", path: "sizing.multiSimultaneity", label: "Multi-split : simultanéité (1 = toutes les pièces à pleine charge)", unit: "×", min: 0.5, max: 1.2 },
   { group: "Temps de pose (en jours)", path: "laborDays.perOutdoorUnit", label: "Par unité extérieure", unit: "j", min: 0, max: 5 },
   { group: "Temps de pose (en jours)", path: "laborDays.perIndoorUnit.mural", label: "Par unité murale", unit: "j", min: 0, max: 5 },
   { group: "Temps de pose (en jours)", path: "laborDays.perIndoorUnit.console", label: "Par console", unit: "j", min: 0, max: 5 },
@@ -43,6 +44,7 @@ export const COEF_FIELDS: CoefField[] = [
   { group: "Temps de pose (en jours)", path: "laborDays.includedLinkMetersPerIndoor", label: "Mètres de liaison inclus par unité intérieure", unit: "m", min: 0, max: 50 },
   { group: "Temps de pose (en jours)", path: "laborDays.perExtraLinkMeter", label: "Par mètre de liaison supplémentaire", unit: "j", min: 0, max: 1 },
   { group: "Temps de pose (en jours)", path: "laborDays.commissioning", label: "Mise en service, tirage au vide, essais", unit: "j", min: 0, max: 3 },
+  { group: "Temps de pose (en jours)", path: "laborDays.zoningPerRoom", label: "Gainable : par pièce zonée", unit: "j", min: 0, max: 2 },
   { group: "Temps de pose (en jours)", path: "laborDays.roundTo", label: "Arrondi au", unit: "j", min: 0.25, max: 1 },
 ];
 

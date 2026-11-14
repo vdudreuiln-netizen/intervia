@@ -6,6 +6,7 @@ import { Button, Card, Field, MoneyField, Notice, PercentField, Select } from "@
 import { formatEuros } from "@/lib/format";
 import { catalogPrices } from "@/lib/pricing/engine";
 import { ACCESSORY_CATEGORIES, ACCESSORY_UNITS, parseAccessoryForm, type AccessoryForm, type AccessoryFormKey } from "@/lib/catalog/forms";
+import { AUTO_ROLE_LABELS } from "@/lib/quote/types";
 import { deleteAccessory, saveAccessory } from "../../actions";
 
 export function AccessoryEditor({ id, initial, coefficient }: { id: string | null; initial: AccessoryForm; coefficient: number }) {
@@ -32,9 +33,18 @@ export function AccessoryEditor({ id, initial, coefficient }: { id: string | nul
         <Select label="Catégorie" value={form.category} onChange={set("category")} error={errors.category} options={Object.entries(ACCESSORY_CATEGORIES).map(([value, label]) => ({ value, label }))} />
         <Field label="Désignation" value={form.name} onChange={set("name")} error={errors.name} />
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Diamètre / taille" value={form.diameter} onChange={set("diameter")} placeholder="1/4 - 3/8" />
+          <Field label="Diamètre / taille" value={form.diameter} onChange={set("diameter")} error={errors.diameter} placeholder="1/4 - 3/8" />
           <Select label="Prix" value={form.unit} onChange={set("unit")} error={errors.unit} options={Object.entries(ACCESSORY_UNITS).map(([value, label]) => ({ value, label }))} />
         </div>
+        <Select
+          label="Ajout automatique aux devis"
+          value={form.auto_role}
+          onChange={set("auto_role")}
+          error={errors.auto_role}
+          options={Object.entries(AUTO_ROLE_LABELS).map(([value, label]) => ({ value, label }))}
+          placeholder="Non (ajout manuel)"
+          hint="Le premier accessoire de chaque rôle est ajouté automatiquement (décochable au métré)"
+        />
         <Field label="Référence fournisseur" value={form.reference} onChange={set("reference")} hint="Permet de mettre à jour le prix lors d'un import de tarif" />
       </Card>
       <Card title="Prix">

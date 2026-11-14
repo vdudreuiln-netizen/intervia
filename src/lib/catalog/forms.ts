@@ -4,8 +4,11 @@
 import { centsToInput, decimalToInput, parseDecimal, parseEuros, parsePercent, rateToInput } from "@/lib/format";
 import { DEFAULT_MAX_INDOOR_RATIO } from "@/lib/sizing/sizing";
 import { PRODUCT_TYPE_LABELS, type ProductType } from "./import";
+import { AUTO_ROLE_LABELS, type AutoRole } from "@/lib/quote/types";
 
 export const ACCESSORY_CATEGORIES: Record<string, string> = {
+  aeraulique: "Réseau aéraulique (gainable)",
+  zonage: "Zonage",
   liaison: "Liaisons frigorifiques",
   goulotte: "Goulottes",
   support: "Supports",
@@ -22,7 +25,7 @@ type Errors<K extends string> = Partial<Record<K, string>>;
 
 // --- Produits ----------------------------------------------------------------
 
-export type ProductFormKey = "brand_id" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "max_indoor_ratio" | "public_price" | "discount";
+export type ProductFormKey = "brand_id" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "max_indoor_ratio" | "link_diameters" | "precharged_length_m" | "extra_charge_g_per_m" | "public_price" | "discount";
 export type ProductForm = Record<ProductFormKey, string>;
 
 export interface ProductValues {
@@ -34,6 +37,9 @@ export interface ProductValues {
   heating_kw: number | null;
   max_outlets: number | null;
   max_indoor_ratio: number | null;
+  link_diameters: string | null;
+  precharged_length_m: number | null;
+  extra_charge_g_per_m: number | null;
   public_price_cents: number;
   discount_rate: number | null;
 }
@@ -48,6 +54,9 @@ export function productToForm(p?: Partial<ProductValues>): ProductForm {
     heating_kw: decimalToInput(p?.heating_kw),
     max_outlets: p?.max_outlets ? String(p.max_outlets) : "",
     max_indoor_ratio: p?.max_indoor_ratio ? String(Math.round(p.max_indoor_ratio * 100)) : "",
+    link_diameters: p?.link_diameters ?? "",
+    precharged_length_m: decimalToInput(p?.precharged_length_m),
+    extra_charge_g_per_m: p?.extra_charge_g_per_m === null || p?.extra_charge_g_per_m === undefined ? "" : String(p.extra_charge_g_per_m),
     public_price: centsToInput(p?.public_price_cents),
     discount: rateToInput(p?.discount_rate),
   };
@@ -87,6 +96,19 @@ export function parseProductForm(f: ProductForm): { ok: boolean; values: Product
     discount = parsePercent(f.discount);
     if (discount === null || discount < 0 || discount >= 1) errors.discount = "Remise entre 0 et 99 %";
   }
+  const isOutdoor = type === "ue_mono" || type === "ue_multi";
+  let precharged: number | null = null;
+  let gPerM: number | null = null;
+  if (isOutdoor && f.precharged_length_m.trim() !== "") {
+    precharged = parseDecimal(f.precharged_length_m);
+    if (precharged === null || precharged < 0 || precharged > 200) errors.precharged_length_m = "Longueur en m (ex. 7,5)";
+  }
+  if (isOutdoor && f.extra_charge_g_per_m.trim() !== "") {
+    gPerM = parseDecimal(f.extra_charge_g_per_m);
+    if (gPerM === null || !Number.isInteger(gPerM) || gPerM < 0 || gPerM > 500) errors.extra_charge_g_per_m = "Grammes par mètre (ex. 20)";
+  }
+  const dia = f.link_diameters.trim();
+  if (dia && !/^\d+\/\d+"?\s*[-–]\s*\d+\/\d+"?$/.test(dia)) errors.link_diameters = "Format : liquide - gaz, ex. 1/4 - 3/8";
   return {
     ok: Object.keys(errors).length === 0,
     errors,
@@ -99,6 +121,9 @@ export function parseProductForm(f: ProductForm): { ok: boolean; values: Product
       heating_kw: heating,
       max_outlets: outlets,
       max_indoor_ratio: ratio,
+      link_diameters: dia || null,
+      precharged_length_m: precharged,
+      extra_charge_g_per_m: gPerM,
       public_price_cents: price ?? 0,
       discount_rate: discount,
     },
@@ -107,7 +132,7 @@ export function parseProductForm(f: ProductForm): { ok: boolean; values: Product
 
 // --- Accessoires ---------------------------------------------------------------
 
-export type AccessoryFormKey = "reference" | "category" | "name" | "diameter" | "unit" | "public_price" | "discount";
+export type AccessoryFormKey = "reference" | "category" | "name" | "diameter" | "unit" | "public_price" | "discount" | "auto_role";
 export type AccessoryForm = Record<AccessoryFormKey, string>;
 export interface AccessoryValues {
   reference: string | null;
@@ -117,6 +142,7 @@ export interface AccessoryValues {
   unit: string;
   public_price_cents: number;
   discount_rate: number;
+  auto_role: AutoRole | null;
 }
 
 export function accessoryToForm(a?: Partial<AccessoryValues>): AccessoryForm {
@@ -128,6 +154,7 @@ export function accessoryToForm(a?: Partial<AccessoryValues>): AccessoryForm {
     unit: a?.unit ?? "u",
     public_price: centsToInput(a?.public_price_cents),
     discount: rateToInput(a?.discount_rate ?? 0),
+    auto_role: a?.auto_role ?? "",
   };
 }
 
@@ -140,10 +167,13 @@ export function parseAccessoryForm(f: AccessoryForm): { ok: boolean; values: Acc
   if (price === null || price <= 0) errors.public_price = "Prix public HT invalide";
   const discount = f.discount.trim() === "" ? 0 : parsePercent(f.discount);
   if (discount === null || discount < 0 || discount >= 1) errors.discount = "Remise entre 0 et 99 %";
+  if (f.auto_role && !(f.auto_role in AUTO_ROLE_LABELS)) errors.auto_role = "Rôle inconnu";
+  if (f.auto_role === "liaison" && !f.diameter.trim()) errors.diameter = "Indiquez le diamètre de la liaison (ex. 1/4 - 3/8)";
   return {
     ok: Object.keys(errors).length === 0,
     errors,
     values: {
+      auto_role: (f.auto_role || null) as AutoRole | null,
       reference: f.reference.trim() || null,
       category: f.category,
       name: f.name.trim(),

@@ -44,3 +44,20 @@ describe("formulaire marque", () => {
     expect(brandToForm()).toEqual({ name: "", discount: "0", sale_coefficient: "1" });
   });
 });
+
+describe("données techniques et rôle", () => {
+  const base = { ...productToForm(), brand_id: "b1", reference: "UE-35", type: "ue_mono", cooling_kw: "3,5", public_price: "1090" };
+  it("unité extérieure : longueur pré-chargée, g/m et diamètres", () => {
+    const r = parseProductForm({ ...base, precharged_length_m: "7,5", extra_charge_g_per_m: "20", link_diameters: '1/4" - 3/8"' });
+    expect(r.ok).toBe(true);
+    expect(r.values).toMatchObject({ precharged_length_m: 7.5, extra_charge_g_per_m: 20, link_diameters: '1/4" - 3/8"' });
+  });
+  it("diamètres mal saisis", () => {
+    expect(parseProductForm({ ...base, link_diameters: "6 mm" }).errors.link_diameters).toBeDefined();
+  });
+  it("accessoire : rôle liaison exige un diamètre", () => {
+    const f = { ...accessoryToForm(), category: "liaison", name: "Liaison", unit: "m", public_price: "12", auto_role: "liaison" };
+    expect(parseAccessoryForm(f).errors.diameter).toBeDefined();
+    expect(parseAccessoryForm({ ...f, diameter: "1/4 - 3/8" }).values.auto_role).toBe("liaison");
+  });
+});

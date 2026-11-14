@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AddressInput } from "@/components/AddressInput";
 import { ImageUpload } from "@/components/ImageUpload";
-import { Button, Card, Choice, Field, MoneyField, Notice, PercentField, TextArea } from "@/components/ui";
+import { Button, Card, Choice, Field, MoneyField, Notice, PercentField, Select, TextArea } from "@/components/ui";
 import { parseCompanyForm, STEPS, vatNumberFromSiren, type CompanyField, type CompanyForm as Form, type FieldErrors, type StepId } from "@/lib/company/settings";
 import { saveCompany } from "./actions";
 
@@ -14,9 +14,10 @@ interface Props {
   initial: Form;
   logoUrl: string | null;
   stampUrl: string | null;
+  brands: { id: string; name: string }[];
 }
 
-export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl }: Props) {
+export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl, brands }: Props) {
   const router = useRouter();
   const [form, setForm] = useState<Form>(initial);
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -156,6 +157,45 @@ export function CompanyForm({ mode, companyId, initial, logoUrl, stampUrl }: Pro
         <MoneyField label="Objectif de marge nette par jour de chantier" value={form.target_margin_per_day_cents} onChange={set("target_margin_per_day_cents")} error={e.target_margin_per_day_cents} hint="Une alerte rouge s'affiche si un devis passe en dessous" />
         <Field label="Validité des devis" value={form.quote_validity_days} onChange={set("quote_validity_days")} error={e.quote_validity_days} inputMode="numeric" suffix="jours" />
         <TextArea label="Conditions de paiement" value={form.payment_terms} onChange={set("payment_terms")} error={e.payment_terms} hint="Imprimées sur chaque devis" />
+      </>
+    ),
+    chantier: (
+      <>
+        <Select
+          label="Marque préférée (option Premium)"
+          value={form.preferred_brand_id}
+          onChange={set("preferred_brand_id")}
+          options={brands.map((b) => ({ value: b.id, label: b.name }))}
+          placeholder="Aucune"
+          hint="Proposée en option « Premium » dans chaque configuration"
+        />
+        <MoneyField
+          label="Mise en service, par unité extérieure"
+          value={form.commissioning_price_cents}
+          onChange={set("commissioning_price_cents")}
+          error={e.commissioning_price_cents}
+          hint="Tirage au vide, test d'étanchéité à l'azote, contrôles. 0 = inclus dans la main d'œuvre (affiché « inclus »)."
+        />
+        <Choice
+          label="Fiche d'intervention fluides (CERFA 15497*04)"
+          value={form.fluid_form_policy as "complement" | "always"}
+          onChange={set("fluid_form_policy")}
+          error={e.fluid_form_policy}
+          options={[
+            { value: "complement", label: "Seulement si charge complémentaire" },
+            { value: "always", label: "À chaque mise en service", hint: "La réglementation impose la fiche à chaque ouverture du circuit frigorifique" },
+          ]}
+        />
+        <MoneyField label="Prix de la fiche fluides" value={form.fluid_form_price_cents} onChange={set("fluid_form_price_cents")} error={e.fluid_form_price_cents} hint="0 = inclus" />
+        <Field
+          label="Longueur de ligne électrique par défaut"
+          value={form.default_electric_length_m}
+          onChange={set("default_electric_length_m")}
+          error={e.default_electric_length_m}
+          inputMode="decimal"
+          suffix="m"
+          hint="Du tableau électrique à l'unité extérieure, ajustable au métré"
+        />
       </>
     ),
     deplacement: (

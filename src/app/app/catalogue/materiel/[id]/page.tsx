@@ -19,7 +19,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   if (!isNew) {
     const { data } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
     if (!data) notFound();
-    initial = productToForm({ ...data, cooling_kw: data.cooling_kw === null ? null : Number(data.cooling_kw), heating_kw: data.heating_kw === null ? null : Number(data.heating_kw), max_indoor_ratio: data.max_indoor_ratio === null ? null : Number(data.max_indoor_ratio), discount_rate: data.discount_rate === null ? null : Number(data.discount_rate) });
+    initial = productToForm({ ...data, cooling_kw: data.cooling_kw === null ? null : Number(data.cooling_kw), heating_kw: data.heating_kw === null ? null : Number(data.heating_kw), max_indoor_ratio: data.max_indoor_ratio === null ? null : Number(data.max_indoor_ratio), discount_rate: data.discount_rate === null ? null : Number(data.discount_rate), precharged_length_m: data.precharged_length_m === null ? null : Number(data.precharged_length_m) });
     history = await loadPriceHistory(supabase, "product_id", id);
   }
   return (
