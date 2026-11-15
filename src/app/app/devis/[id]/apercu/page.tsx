@@ -7,6 +7,7 @@ import { loadQuote, loadQuoteLines } from "@/lib/quote/load";
 import { LinkButton } from "@/components/ui";
 import { QuoteEditor } from "./QuoteEditor";
 import { documentWarnings } from "@/lib/pdf/document";
+import { loadDatasheets } from "@/lib/plans/annex.server";
 import { buildSupplierView, computeSupplierPlan, internalShipping, loadQuoteSupplierSettings } from "@/lib/suppliers/quote";
 
 export const metadata: Metadata = { title: "Devis" };
@@ -25,6 +26,9 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
     targetMarginPerDayCents: Number(company.target_margin_per_day_cents),
   };
   const supplierSettings = await loadQuoteSupplierSettings(db, companyId, id);
+  // Annexes : cahier des charges dès qu'une solution est choisie ; fiches techniques des produits du devis
+  const datasheets = (await loadDatasheets(db, companyId, id)).map((d) => ({ productId: d.productId, name: d.name }));
+  const hasAnnexes = Boolean(q.wizard.selection);
   const shippingCostCents = internalShipping(supplierSettings);
   // Technicien sans accès aux marges : alertes calculées ici, lignes envoyées SANS prix d'achat ni fournisseur.
   const server = restricted
@@ -106,6 +110,8 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
           supplierView={supplierView}
           purchaseOrders={purchaseOrders}
           hasSiteAddress={Boolean(q.project.site_address)}
+          datasheets={datasheets}
+          hasAnnexes={hasAnnexes}
         />
       )}
     </div>

@@ -7,6 +7,7 @@ import { loadBrands, loadPriceHistory } from "@/lib/catalog/queries";
 import { productToForm } from "@/lib/catalog/forms";
 import { PriceHistory } from "../../PriceHistory";
 import { ProductEditor } from "./ProductEditor";
+import { DatasheetCard } from "./DatasheetCard";
 import { loadDiscountBook, loadOffers, loadSuppliers } from "@/lib/suppliers/load";
 import { buildItemPricing } from "@/lib/suppliers/views";
 import { centsToInput, rateToInput } from "@/lib/format";
@@ -22,10 +23,15 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   let initial = productToForm();
   let history: Awaited<ReturnType<typeof loadPriceHistory>> = [];
   let refPublic: number | null = null;
+  let datasheet: { name: string; url: string | null } | null = null;
   if (!isNew) {
     const { data } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
     if (!data) notFound();
     refPublic = Number(data.public_price_cents);
+    if (data.datasheet_path) {
+      const { data: signed } = await supabase.storage.from("datasheets").createSignedUrl(data.datasheet_path, 600);
+      datasheet = { name: data.datasheet_name ?? "Fiche technique.pdf", url: signed?.signedUrl ?? null };
+    }
     initial = productToForm({
       ...data,
       cooling_kw: data.cooling_kw === null ? null : Number(data.cooling_kw),
@@ -72,6 +78,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         }))}
         pricing={pricing}
       />
+      {!isNew && <DatasheetCard productId={id} companyId={company.id} current={datasheet} />}
       <PriceHistory items={history} />
     </div>
   );

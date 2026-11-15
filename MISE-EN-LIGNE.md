@@ -184,20 +184,20 @@ Ce sont VOS informations (vendeur de ClimDevis), affichées dans les mentions l�
 
 ---
 
-## Partie F bis — Lecture des tarifs PDF par l'IA (facultatif, 5 min)
+## Partie F bis — Lecture des tarifs PDF et des plans par l'IA (facultatif, 5 min)
 
-Sans cette clé, tout fonctionne ; seul l'import Excel / CSV des tarifs est proposé.
+Sans cette clé, tout fonctionne : import Excel / CSV des tarifs, et pièces dessinées à la main sur le plan.
 
 - Sur **console.anthropic.com**, créez un compte, ajoutez un moyen de paiement, puis **API Keys** › **Create Key**.
 - Réglez une **limite de dépenses mensuelle** (Settings › Limits) : c'est votre filet de sécurité en plus des quotas
-  par formule de ClimDevis (Solo 300 pages / Équipe 1 000 / Entreprise 3 000 par mois).
+  par formule de ClimDevis (tarifs PDF : 300 / 1 000 / 3 000 pages ; plans : 30 / 100 / 300 analyses par mois).
 - Dans Vercel › **Settings** › **Environment Variables**, ajoutez `ANTHROPIC_API_KEY` = la clé (ne la collez nulle part ailleurs), puis **Redeploy**.
-- Facultatif : `ANTHROPIC_TARIFF_MODEL` pour changer de modèle (par défaut `claude-opus-5-5`).
+- Facultatif : `ANTHROPIC_TARIFF_MODEL` et `ANTHROPIC_PLAN_MODEL` pour changer de modèle (par défaut `claude-opus-5-5`).
 - Test : **Catalogue › Importer un tarif**, choisissez un PDF, sélectionnez 2 ou 3 pages de prix, vérifiez les lignes lues puis le résumé.
 
-> Base déjà installée avant le bloc « multi-fournisseurs » ? Dans Supabase › **SQL Editor**, exécutez seulement
-> le fichier `supabase/migrations/20261115000010_multi_suppliers.sql` (une fois). Une installation neuve avec
-> `supabase/climdevis-installation.sql` le contient déjà.
+> Base déjà installée avant les blocs B et A ? Dans Supabase › **SQL Editor**, exécutez une seule fois, dans cet ordre,
+> `supabase/migrations/20261115000010_multi_suppliers.sql` puis `supabase/migrations/20261116000011_plans.sql`.
+> Une installation neuve avec `supabase/climdevis-installation.sql` les contient déjà (y compris les espaces de stockage « plans » et « datasheets »).
 
 ---
 

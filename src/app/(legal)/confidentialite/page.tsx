@@ -50,6 +50,10 @@ export default function Confidentialite() {
           Lecture automatique des tarifs fournisseurs en PDF (uniquement si vous l&apos;utilisez) : {HOSTING.ai}. Seules les pages de tarif que vous choisissez sont transmises ; elles ne contiennent normalement aucune donnée personnelle de vos
           clients. Selon les conditions commerciales du prestataire, ces données ne servent pas à entraîner ses modèles.
         </li>
+        <li>
+          Lecture automatique des plans de logement (uniquement si vous l&apos;utilisez) : {HOSTING.ai}. L&apos;image du plan est transmise ; elle peut comporter le nom ou l&apos;adresse de votre client si ceux-ci figurent sur le plan.
+          Conseil : masquez le cartouche si vous ne souhaitez pas les transmettre.
+        </li>
         <li>Géocodage des adresses : Institut national de l&apos;information géographique et forestière (IGN, Géoplateforme, France) — seules les adresses saisies sont transmises.</li>
         <li>Envoi des e-mails : service d&apos;envoi intégré de Supabase (phase de test, à remplacer par un prestataire dédié avant le premier client payant).</li>
       </ul>

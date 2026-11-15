@@ -1,5 +1,7 @@
 "use client";
 
+import { SHARE_MODES, type ShareMode } from "@/lib/plans/annex";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Choice, Field, Notice, PercentField } from "@/components/ui";
@@ -109,29 +111,52 @@ export function DocumentPanel({ quoteId, options, companyDepositRate }: { quoteI
 const STATUS_LABELS = { brouillon: "Brouillon", envoye: "Envoyé", accepte: "Accepté", refuse: "Refusé" } as const;
 type Status = keyof typeof STATUS_LABELS;
 
-export function SharePanel({ quoteId, number, status, warnings }: { quoteId: string; number: string; status: Status; warnings: string[] }) {
+export function SharePanel({ quoteId, number, status, warnings, datasheets = [], hasAnnexes = false }: { quoteId: string; number: string; status: Status; warnings: string[]; datasheets?: { productId: string; name: string }[]; hasAnnexes?: boolean }) {
   const router = useRouter();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
-  const url = `/app/devis/${quoteId}/pdf`;
+  const [mode, setMode] = useState<ShareMode>(hasAnnexes || datasheets.length ? "annexes" : "seul");
+  const url = `/app/devis/${quoteId}/pdf?mode=${mode}`;
+  const fileName = `Devis-${number}${mode === "seul" ? "" : mode === "complet" ? "-dossier-complet" : "-annexes"}.pdf`;
+
+  async function fetchFile(href: string, name: string): Promise<File> {
+    const res = await fetch(href);
+    if (!res.ok) throw new Error();
+    return new File([await res.blob()], name, { type: "application/pdf" });
+  }
+
+  async function shareFiles(files: File[], title: string) {
+    if (navigator.canShare?.({ files })) {
+      await navigator.share({ files, title });
+      return;
+    }
+    for (const file of files) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(file);
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+  }
 
   async function share() {
     setMsg(null);
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error();
-      const file = new File([await res.blob()], `Devis-${number}.pdf`, { type: "application/pdf" });
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: `Devis ${number}` });
-      } else {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(file);
-        a.download = file.name;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
+      const files = [await fetchFile(url, fileName)];
+      // « Devis + annexes » : fiches techniques en fichiers séparés (le devis reste léger)
+      if (mode === "annexes") for (const d of datasheets) files.push(await fetchFile(`/app/devis/${quoteId}/fiche/${d.productId}`, d.name));
+      await shareFiles(files, `Devis ${number}`);
     } catch (e) {
       if ((e as Error)?.name !== "AbortError") setMsg({ ok: false, text: "Impossible de préparer le PDF. Vérifiez votre connexion." });
+    }
+  }
+
+  async function shareSite() {
+    setMsg(null);
+    try {
+      await shareFiles([await fetchFile(`/app/devis/${quoteId}/chantier`, `Chantier-${number}.pdf`)], `Dossier chantier ${number}`);
+    } catch (e) {
+      if ((e as Error)?.name !== "AbortError") setMsg({ ok: false, text: "Dossier chantier indisponible : choisissez d'abord une solution dans le devis." });
     }
   }
   const setStatus = (s: Status) =>
@@ -151,15 +176,37 @@ export function SharePanel({ quoteId, number, status, warnings }: { quoteId: str
       <p className="text-lg">
         Statut : <strong>{STATUS_LABELS[status]}</strong>
       </p>
+      <Choice
+        label="Que partager ?"
+        value={mode}
+        onChange={setMode}
+        options={(Object.keys(SHARE_MODES) as ShareMode[]).map((m) => ({
+          value: m,
+          label: SHARE_MODES[m].label,
+          hint: m === "annexes" && datasheets.length ? `${SHARE_MODES[m].hint} (${datasheets.length})` : m !== "seul" && !hasAnnexes && !datasheets.length ? "Aucune annexe pour l'instant (plan, implantation, fiches techniques)" : SHARE_MODES[m].hint,
+        }))}
+      />
       <div className="grid gap-3 sm:grid-cols-2">
         <a href={url} target="_blank" rel="noopener" className="inline-flex min-h-14 items-center justify-center rounded-xl border-2 border-brand bg-white px-6 text-lg font-bold text-brand">
           Voir le PDF
         </a>
         <Button type="button" onClick={share}>
-          Partager le PDF
+          Partager
         </Button>
       </div>
       <p className="text-sm text-slate-600">« Partager » ouvre le menu du téléphone : e-mail, WhatsApp, SMS… Puis marquez le devis comme envoyé.</p>
+      <div className="rounded-xl border-2 border-slate-300 p-3">
+        <p className="text-base font-bold">Dossier chantier (sans prix)</p>
+        <p className="text-sm text-slate-600">Pour l&apos;équipe de pose : matériel, longueurs, charge, plan, contrôles.</p>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <a href={`/app/devis/${quoteId}/chantier`} target="_blank" rel="noopener" className="inline-flex min-h-12 items-center justify-center rounded-xl border-2 border-brand bg-white px-4 text-base font-bold text-brand">
+            Voir
+          </a>
+          <Button type="button" variant="secondary" onClick={shareSite}>
+            Partager
+          </Button>
+        </div>
+      </div>
       <div className="grid grid-cols-3 gap-2">
         <Button type="button" variant={status === "envoye" ? "primary" : "secondary"} disabled={pending || warnings.length > 0} onClick={() => setStatus("envoye")}>
           Envoyé

@@ -5,6 +5,15 @@
 import { Document, Image, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import type { QuoteDocument } from "./document";
 import { WITHDRAWAL_FORM_TEXT } from "./document";
+import { PlanPages, SpecPage } from "@/lib/plans/PlanPdf";
+import type { PlanAnnex } from "@/lib/plans/annex";
+import type { SpecSection } from "@/lib/plans/spec";
+
+/** Annexes du devis (version CLIENT) : plan d'implantation et cahier des charges, sans prix. */
+export interface QuoteAnnexes {
+  plans: PlanAnnex[];
+  spec: SpecSection[] | null;
+}
 
 /** Montants pour la police Helvetica (pas d'espace fine insécable). */
 export function pdfEuros(cents: number): string {
@@ -52,7 +61,9 @@ const s = StyleSheet.create({
 
 export type PdfImage = { data: Buffer; format: "png" | "jpg" } | null;
 
-export function QuotePdf({ doc, logo, stamp }: { doc: QuoteDocument; logo: PdfImage; stamp: PdfImage }) {
+export function QuotePdf({ doc, logo, stamp, annexes }: { doc: QuoteDocument; logo: PdfImage; stamp: PdfImage; annexes?: QuoteAnnexes | null }) {
+  const annexFooter = { left: doc.company.name, right: `Devis ${doc.number} – annexe` };
+  const annexPlans = annexes?.plans.filter((p) => p.markers.length > 0) ?? [];
   const detailed = doc.presentation === "detaille";
   const t = doc.totals;
   return (
@@ -231,6 +242,15 @@ export function QuotePdf({ doc, logo, stamp }: { doc: QuoteDocument; logo: PdfIm
           ))}
           <Text style={s.legal}>(*) Rayez la mention inutile.</Text>
         </Page>
+      )}
+      {annexes && annexPlans.length > 0 && <PlanPages plans={annexPlans} title="Annexe 1 – Plan d'implantation" footer={annexFooter} />}
+      {annexes?.spec && (
+        <SpecPage
+          title={`Annexe ${annexPlans.length ? 2 : 1} – Cahier des charges`}
+          sections={annexes.spec}
+          footer={annexFooter}
+          note="Ce cahier des charges fait partie du devis. Les emplacements définitifs sont confirmés avec vous avant le début des travaux."
+        />
       )}
     </Document>
   );

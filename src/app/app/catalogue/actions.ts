@@ -204,3 +204,22 @@ export async function deleteExamples(): Promise<ActionResult> {
   revalidatePath("/app/catalogue");
   return { ok: true, message: "Catalogue d'exemple supprimé ✔" };
 }
+
+/** Fiche technique fabricant (PDF déjà déposé dans le stockage par le navigateur), ou null pour la retirer. */
+export async function setDatasheet(productId: string, file: { path: string; name: string } | null): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
+  const { supabase, company } = await getCurrentCompany();
+  if (!UUID.test(productId)) return { ok: false, message: "Produit introuvable." };
+  const { data: p } = await supabase.from("products").select("datasheet_path").eq("company_id", company.id).eq("id", productId).maybeSingle();
+  if (!p) return { ok: false, message: "Produit introuvable." };
+  if (file && (!file.path.startsWith(`${company.id}/`) || file.path.includes("..") || !file.path.endsWith(".pdf"))) return { ok: false, message: "Fichier invalide." };
+  const { error } = await supabase
+    .from("products")
+    .update({ datasheet_path: file?.path ?? null, datasheet_name: file ? file.name.slice(0, 120) : null })
+    .eq("company_id", company.id)
+    .eq("id", productId);
+  if (error) return { ok: false, message: "Enregistrement impossible. Réessayez." };
+  if (p.datasheet_path && p.datasheet_path !== file?.path) await supabase.storage.from("datasheets").remove([p.datasheet_path]);
+  revalidatePath(`/app/catalogue/materiel/${productId}`);
+  return { ok: true, message: file ? "Fiche technique enregistrée ✔ (jointe aux devis qui contiennent ce produit)" : "Fiche technique retirée ✔" };
+}

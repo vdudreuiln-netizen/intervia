@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Field, Notice } from "@/components/ui";
+import { Button, Card, Field, LinkButton, Notice } from "@/components/ui";
 import { decimalToInput, formatEuros, parseDecimal } from "@/lib/format";
 import { computeQuote } from "@/lib/pricing/engine";
 import type { Coefficients } from "@/lib/sizing/coefficients";
@@ -72,6 +72,12 @@ export function MetreStep({ quoteId, company, site, coefs, rooms, equipment, acc
 
   return (
     <div className="space-y-6">
+      <Card title="Métré depuis le plan">
+        <p className="text-base text-slate-700">Placez les unités et tracez liaisons, condensats, gaines et alimentation sur le plan : les longueurs sont reportées ici.</p>
+        <LinkButton href={`/app/devis/${quoteId}/plan?mode=implantation`} variant="secondary" full>
+          📐 Implanter sur le plan
+        </LinkButton>
+      </Card>
       {built.warnings.map((w) => (
         <Notice key={w}>{w}</Notice>
       ))}

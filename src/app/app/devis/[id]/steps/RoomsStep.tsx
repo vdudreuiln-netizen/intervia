@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Choice, Field, Notice, Select } from "@/components/ui";
+import { Button, Card, Choice, Field, LinkButton, Notice, Select } from "@/components/ui";
 import { INSULATION_LABELS, ORIENTATION_LABELS, type Insulation, type Orientation } from "@/lib/sizing/sizing";
 import { LEVEL_LABELS, newRoom, type RoomForm } from "@/lib/quote/rooms";
 import type { IndoorChoice } from "@/lib/quote/types";
@@ -22,6 +22,12 @@ export function RoomsStep({ quoteId, initial, gainableAccess, nextStep, submitLa
 
   return (
     <div className="space-y-6">
+      <Card title="Gagner du temps avec le plan">
+        <p className="text-base text-slate-700">PDF d&apos;architecte, plan d&apos;agence, photo ou croquis : les pièces, surfaces et fenêtres sont lues puis vérifiées par vous.</p>
+        <LinkButton href={`/app/devis/${quoteId}/plan`} variant="secondary" full>
+          📐 Importer le plan du logement
+        </LinkButton>
+      </Card>
       {rooms.map((r, i) => {
         const e = errors[r.id] ?? {};
         return (

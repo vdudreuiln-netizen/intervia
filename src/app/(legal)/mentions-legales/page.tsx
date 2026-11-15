@@ -28,7 +28,7 @@ export default function MentionsLegales() {
         <li>Application : {HOSTING.app}</li>
         <li>Base de données et authentification : {HOSTING.database}</li>
         <li>Paiements : {HOSTING.payments}</li>
-        <li>Lecture des tarifs PDF (facultative) : {HOSTING.ai}</li>
+        <li>Lecture des tarifs PDF et des plans (facultative) : {HOSTING.ai}</li>
       </ul>
       <h2>Propriété intellectuelle</h2>
       <p>Le logiciel {EDITOR.productName}, ses textes, interfaces et éléments graphiques sont la propriété de l&apos;éditeur. Toute reproduction non autorisée est interdite. Les données saisies par les utilisateurs (catalogue, clients, devis) restent leur propriété.</p>

@@ -28,12 +28,12 @@ export const EDITOR = {
 };
 
 /** Version des documents contractuels : à changer à chaque modification des CGV / politique. */
-export const LEGAL_VERSION = "2026-11-15";
+export const LEGAL_VERSION = "2026-11-16";
 
 export const HOSTING = {
   app: "Vercel Inc., 440 N Barranca Ave #4133, Covina, CA 91723, États-Unis (vercel.com) — fonctions exécutées dans la région Paris (cdg1)",
   database: "Supabase Inc., 970 Toa Payoh North #07-04, Singapour 318992 (supabase.com) — base de données hébergée dans la région Union européenne choisie à la création du projet (Paris, eu-west-3)",
   payments: "Stripe Payments Europe Limited, 1 Grand Canal Street Lower, Dublin 2, Irlande (stripe.com)",
-  /** Lecture des tarifs fournisseurs PDF (fonction facultative). Entité contractante pour l'EEE selon les conditions commerciales d'Anthropic. */
+  /** Lecture des tarifs fournisseurs PDF et des plans de logement (fonctions facultatives). Entité contractante pour l'EEE selon les conditions commerciales d'Anthropic. */
   ai: "Anthropic Ireland, Limited (anthropic.com), Irlande — modèles Claude, avec possible traitement hors de l'Union européenne encadré par les clauses contractuelles types",
 };

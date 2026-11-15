@@ -17,6 +17,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 6 | PDF du devis : modes particulier / détaillé, mentions légales, acompte, rétractation, partage | ✅ |
 | 7 | Tableau de bord : CA HT signé, marge, transformation, relances, duplication | ✅ |
 | 8 | Abonnement Stripe (3 formules + offre de lancement), équipe et rôles, lecture seule | ✅ |
+| A | Plans : import (PDF, photo, croquis, plan d'agence) et lecture par l'IA, validation des pièces, implantation → métré, annexes PDF, dossier chantier, fiches techniques | ✅ |
 | B | Multi-fournisseurs : tarifs par fournisseur (Excel/CSV/PDF par l'IA), remises marque › famille › référence, rapprochement des références, choix du moins cher port compris, comparatif, bons de commande, alerte tarif ancien | ✅ |
 
 ## Organisation
@@ -65,7 +66,7 @@ Vérification de la RLS et de l'import sur un PostgreSQL local :
 
 ```bash
 createdb climdevis_test
-for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql supabase/tests/50_margin_isolation_check.sql supabase/tests/60_multi_suppliers_check.sql; do
+for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql supabase/tests/50_margin_isolation_check.sql supabase/tests/60_multi_suppliers_check.sql supabase/tests/70_plans_check.sql; do
   psql -d climdevis_test -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -107,6 +108,15 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
   à chaque mise en service, par défaut — réglementation — ou seulement si complément), réseau aéraulique et zonage pour le gainable.
 - Les lignes du devis sont recalculées côté serveur à partir du catalogue en base.
 - Multi-split : Σ puissances intérieures ≤ 130 % de l'unité extérieure (modifiable par modèle).
+
+## Plans et implantation (bloc A)
+
+- **Import** : un plan par niveau (PDF rendu en image dans le navigateur avec pdf.js, photo, croquis, plan d'agence), stocké en privé (`plans`).
+- **Lecture par Claude** (`src/lib/plans/analyze.server.ts`) : pièces, surfaces et cotes écrites, fenêtres / portes-fenêtres / baies, pièces ouvertes, niveau, flèche du nord. Quota mensuel « analyses de plans ». Rien n'est utilisé avant validation.
+- **Échelle** : mesure de l'artisan › cotes du plan › surfaces écrites. **Contrôle** : alerte si la somme des pièces s'écarte de plus de 10 % de la surface du logement.
+- **Pièces proposées** : pièces ouvertes fusionnées (décochable), orientation = façade la plus vitrée selon la flèche du nord, vitrage important au-delà de 20 % de la surface au sol ; tout reste modifiable.
+- **Implantation** : l'artisan place unités, bouches, grilles, tableau, évacuation, et trace liaisons, condensats, goulottes, gaines, alimentation (+ supplément pour les montées). Longueurs arrondies au demi-mètre supérieur → métré.
+- **PDF** : devis seul / devis + annexes (plan + cahier des charges client ; fiches techniques en fichiers séparés) / dossier complet fusionné. Dossier chantier séparé, sans aucun prix.
 
 ## Multi-fournisseurs (bloc B)
 

@@ -40,6 +40,8 @@ interface Props {
   supplierView?: QuoteSupplierView | null;
   purchaseOrders?: PurchaseOrderSummary[] | null;
   hasSiteAddress?: boolean;
+  datasheets?: { productId: string; name: string }[];
+  hasAnnexes?: boolean;
 }
 
 const VAT_OPTIONS = [
@@ -68,6 +70,8 @@ export function QuoteEditor({
   supplierView,
   purchaseOrders,
   hasSiteAddress = false,
+  datasheets = [],
+  hasAnnexes = false,
 }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -141,7 +145,7 @@ export function QuoteEditor({
       {showMargin && <CoefficientsForm coefficients={coefficients} pending={pending} onApply={(m, a) => run(() => setQuoteCoefficients(quoteId, m, a), "Prix recalculés avec les coefficients du devis ✔ (vos retouches sont conservées)")} />}
 
       <DocumentPanel quoteId={quoteId} options={documentOptions} companyDepositRate={companyDepositRate} />
-      <SharePanel quoteId={quoteId} number={number} status={status} warnings={warnings} />
+      <SharePanel quoteId={quoteId} number={number} status={status} warnings={warnings} datasheets={datasheets} hasAnnexes={hasAnnexes} />
       {showMargin && status === "accepte" && purchaseOrders && <OrdersPanel quoteId={quoteId} orders={purchaseOrders} hasSiteAddress={hasSiteAddress} />}
 
       <LinkButton href={`/app/devis/${quoteId}?etape=4`} variant="secondary" full>
