@@ -18,6 +18,8 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 7 | Tableau de bord : CA HT signé, marge, transformation, relances, duplication | ✅ |
 | 8 | Abonnement Stripe (3 formules + offre de lancement), équipe et rôles, lecture seule | ✅ |
 | A | Plans : import (PDF, photo, croquis, plan d'agence) et lecture par l'IA, validation des pièces, implantation → métré, annexes PDF, dossier chantier, fiches techniques | ✅ |
+| A5 | Suggestions d'emplacement (une proposition + variante, raison en une ligne), règles impératives / préférences réglables, forçage motivé | ✅ |
+| A6 | Mode chantier : pose cochée sur le plan, photos placées, écarts chiffrés et avenant, mise en service et fiche fluides, PV de réception signé, suivi des chantiers | ✅ |
 | B | Multi-fournisseurs : tarifs par fournisseur (Excel/CSV/PDF par l'IA), remises marque › famille › référence, rapprochement des références, choix du moins cher port compris, comparatif, bons de commande, alerte tarif ancien | ✅ |
 
 ## Organisation
@@ -66,7 +68,7 @@ Vérification de la RLS et de l'import sur un PostgreSQL local :
 
 ```bash
 createdb climdevis_test
-for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql supabase/tests/50_margin_isolation_check.sql supabase/tests/60_multi_suppliers_check.sql supabase/tests/70_plans_check.sql; do
+for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql supabase/tests/50_margin_isolation_check.sql supabase/tests/60_multi_suppliers_check.sql supabase/tests/70_plans_check.sql supabase/tests/80_site_check.sql; do
   psql -d climdevis_test -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -117,6 +119,13 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
 - **Pièces proposées** : pièces ouvertes fusionnées (décochable), orientation = façade la plus vitrée selon la flèche du nord, vitrage important au-delà de 20 % de la surface au sol ; tout reste modifiable.
 - **Implantation** : l'artisan place unités, bouches, grilles, tableau, évacuation, et trace liaisons, condensats, goulottes, gaines, alimentation (+ supplément pour les montées). Longueurs arrondies au demi-mètre supérieur → métré.
 - **PDF** : devis seul / devis + annexes (plan + cahier des charges client ; fiches techniques en fichiers séparés) / dossier complet fusionné. Dossier chantier séparé, sans aucun prix.
+
+## Règles d'implantation et mode chantier (A5, A6)
+
+- **Règles** (`src/lib/plans/rules.ts`) : impératives (rouge, à corriger ou à forcer avec un motif) et préférences (orange), activables dans Paramètres › Règles d'implantation. Surface minimale R32 : A_min = (m / (2,5 × LFL^1,25 × h0))², LFL 0,307 kg/m³, aucune exigence sous 1,84 kg (IEC 60335-2-40, annexe GG) ; la notice du fabricant prime. Données fabricant saisies sur la fiche produit (fluide, charge usine, longueur et dénivelé max, dégagements) ; absentes = règle signalée « non vérifiable ».
+- **Condensats** : si la pente gravitaire est impossible, la pompe de relevage est cochée automatiquement au métré.
+- **Suggestions** (`src/lib/plans/suggest.ts`) : une proposition par élément avec sa raison, « Autre proposition » = candidat suivant ; les repères d'environnement (lit, canapé, bureau, source de chaleur, rue, voisin) sont pris en compte.
+- **Mode chantier** (`/app/chantiers`) : éléments cochés sur le plan, photos placées à l'endroit de l'élément, écarts chiffrés côté serveur avec les prix du devis (surcoût et impact sur la marge dans une table réservée aux membres autorisés), avenant PDF (le devis signé n'est jamais modifié), checklist de mise en service, fiche fluides préremplie (données à reporter sur le CERFA 15497*04), procès-verbal de réception signé sur l'écran avec photos.
 
 ## Multi-fournisseurs (bloc B)
 

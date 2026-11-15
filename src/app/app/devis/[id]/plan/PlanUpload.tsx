@@ -10,7 +10,7 @@ const MAX_SIDE = 2400;
 const MAX_BYTES = 3_500_000;
 
 /** Image (canvas) → JPEG, réduite si besoin. */
-async function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
+export async function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
   for (const q of [0.88, 0.8, 0.7, 0.6]) {
     const b = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/jpeg", q));
     if (b && b.size <= MAX_BYTES) return b;
@@ -23,7 +23,7 @@ function fit(w: number, h: number) {
   return { w: Math.round(w * k), h: Math.round(h * k) };
 }
 
-async function imageFileToCanvas(file: File): Promise<HTMLCanvasElement> {
+export async function imageFileToCanvas(file: File): Promise<HTMLCanvasElement> {
   const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
   const { w, h } = fit(bmp.width, bmp.height);
   const c = document.createElement("canvas");

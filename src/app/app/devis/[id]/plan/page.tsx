@@ -3,25 +3,22 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Notice } from "@/components/ui";
 import { costAccess } from "@/lib/security/costs";
-import { loadQuote, loadWizardCatalog } from "@/lib/quote/load";
-import { fromSelection } from "@/lib/quote/equipment";
+import { loadQuote } from "@/lib/quote/load";
+import { loadRuleContext } from "@/lib/plans/rules.server";
 import { LEVEL_LABELS } from "@/lib/quote/rooms";
 import { sanitizeDraft } from "@/lib/plans/analysis";
-import { equipmentTags, sanitizeLayout } from "@/lib/plans/layout";
 import { planAnalysisEnabled } from "@/lib/plans/analyze.server";
 import { PlanUpload } from "./PlanUpload";
 import { PlanReview } from "./PlanReview";
-import { LayoutEditor, type EquipmentLite } from "./LayoutEditor";
+import { LayoutEditor } from "./LayoutEditor";
 
 export const metadata: Metadata = { title: "Plan" };
 // Lecture du plan par l'IA : jusqu'à une minute
 export const maxDuration = 300;
 
-const INDOOR_LABEL: Record<string, string> = { ui_murale: "murale", ui_console: "console", ui_cassette: "cassette", ui_gainable: "gainable" };
-
 export default async function PlanPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ niveau?: string; mode?: string }> }) {
   const [{ id }, sp] = await Promise.all([params, searchParams]);
-  const { supabase, db, companyId } = await costAccess();
+  const { supabase, db, companyId, company } = await costAccess();
   const q = await loadQuote(supabase, id);
   if (!q) notFound();
   const level = Math.min(5, Math.max(-1, Number.parseInt(sp.niveau ?? "0", 10) || 0));
@@ -37,24 +34,9 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
   const levels = [...new Set([...(plans ?? []).map((p) => p.level as number), level])].sort((a, b) => a - b);
   const label = (l: number) => LEVEL_LABELS[l] ?? `Niveau ${l}`;
 
-  let equipment: EquipmentLite | null = null;
-  if (mode === "implantation" && q.wizard.selection) {
-    const catalog = await loadWizardCatalog(db, companyId);
-    const eq = fromSelection(q.wizard.selection, catalog.products);
-    if (eq) {
-      const tags = equipmentTags(eq);
-      const roomName = new Map(q.rooms.map((r) => [r.id, r.name]));
-      // Aucune donnée de prix : seulement repères, libellés et types
-      equipment = {
-        systems: eq.systems.map((s) => ({
-          key: s.key,
-          tag: tags.outdoor.get(s.key)!,
-          label: `unité extérieure ${s.outdoor.reference}`,
-          indoors: s.indoors.map((i) => ({ key: i.key, tag: tags.indoor.get(i.key)!, label: `${INDOOR_LABEL[i.product.type] ?? ""} ${i.roomIds.map((r) => roomName.get(r) ?? "").join(", ")}`.trim(), gainable: i.product.type === "ui_gainable" })),
-        })),
-      };
-    }
-  }
+  // Contexte des règles (tous niveaux) : données techniques seulement, aucun prix
+  const rules = mode === "implantation" ? await loadRuleContext(supabase, db, companyId, q, company.placement_rules) : null;
+  const ruleContext = rules ? { plans: rules.plans, equipment: rules.equipment, tech: rules.tech, rooms: rules.rooms, settings: rules.settings } : null;
 
   const href = (l: number, m = mode) => `/app/devis/${id}/plan?niveau=${l}${m === "implantation" ? "&mode=implantation" : ""}`;
   return (
@@ -104,7 +86,7 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
       )}
 
       {mode === "implantation" &&
-        (!q.wizard.selection || !equipment ? (
+        (!q.wizard.selection || !ruleContext ? (
           <Notice tone="danger">Choisissez d&apos;abord une solution (étape 4) : l&apos;implantation place le matériel retenu.</Notice>
         ) : !plan || !signed ? (
           <Notice>
@@ -115,15 +97,16 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
           </Notice>
         ) : (
           <LayoutEditor
+            key={plan.id}
             quoteId={id}
             level={level}
             imageUrl={signed}
             width={plan.width_px}
             height={plan.height_px}
-            mPerPx={plan.scale_m_per_px === null ? null : Number(plan.scale_m_per_px)}
             northDeg={plan.north_deg === null ? null : Number(plan.north_deg)}
-            initial={sanitizeLayout(plan.layout, { width: plan.width_px, height: plan.height_px })}
-            equipment={equipment}
+            context={ruleContext}
+            quoteRooms={q.rooms.map((r) => ({ id: r.id, name: r.name }))}
+            validatedAt={plan.layout_validated_at}
           />
         ))}
     </div>

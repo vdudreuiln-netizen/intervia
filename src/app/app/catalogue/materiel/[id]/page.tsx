@@ -8,6 +8,8 @@ import { productToForm } from "@/lib/catalog/forms";
 import { PriceHistory } from "../../PriceHistory";
 import { ProductEditor } from "./ProductEditor";
 import { DatasheetCard } from "./DatasheetCard";
+import { TechCard } from "./TechCard";
+import type { ProductTechForm } from "../../actions";
 import { loadDiscountBook, loadOffers, loadSuppliers } from "@/lib/suppliers/load";
 import { buildItemPricing } from "@/lib/suppliers/views";
 import { centsToInput, rateToInput } from "@/lib/format";
@@ -24,10 +26,22 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   let history: Awaited<ReturnType<typeof loadPriceHistory>> = [];
   let refPublic: number | null = null;
   let datasheet: { name: string; url: string | null } | null = null;
+  let techForm: ProductTechForm | null = null;
+  let outdoor = false;
   if (!isNew) {
     const { data } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
     if (!data) notFound();
     refPublic = Number(data.public_price_cents);
+    const cl = (data.clearances ?? {}) as Record<string, number>;
+    const str = (v: unknown) => (v === null || v === undefined ? "" : String(v).replace(".", ","));
+    outdoor = data.type === "ue_mono" || data.type === "ue_multi";
+    techForm = {
+      refrigerant: data.refrigerant ?? "",
+      factoryChargeKg: str(data.factory_charge_kg),
+      maxLinkM: str(data.max_link_m),
+      maxHeightDiffM: str(data.max_height_diff_m),
+      clearances: { top: str(cl.top), left: str(cl.left), right: str(cl.right), bottom: str(cl.bottom), front: str(cl.front), rear: str(cl.rear) },
+    };
     if (data.datasheet_path) {
       const { data: signed } = await supabase.storage.from("datasheets").createSignedUrl(data.datasheet_path, 600);
       datasheet = { name: data.datasheet_name ?? "Fiche technique.pdf", url: signed?.signedUrl ?? null };
@@ -78,6 +92,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         }))}
         pricing={pricing}
       />
+      {!isNew && techForm && <TechCard productId={id} initial={techForm} outdoor={outdoor} />}
       {!isNew && <DatasheetCard productId={id} companyId={company.id} current={datasheet} />}
       <PriceHistory items={history} />
     </div>

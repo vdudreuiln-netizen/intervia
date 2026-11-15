@@ -196,8 +196,9 @@ Sans cette clé, tout fonctionne : import Excel / CSV des tarifs, et pièces des
 - Test : **Catalogue › Importer un tarif**, choisissez un PDF, sélectionnez 2 ou 3 pages de prix, vérifiez les lignes lues puis le résumé.
 
 > Base déjà installée avant les blocs B et A ? Dans Supabase › **SQL Editor**, exécutez une seule fois, dans cet ordre,
-> `supabase/migrations/20261115000010_multi_suppliers.sql` puis `supabase/migrations/20261116000011_plans.sql`.
-> Une installation neuve avec `supabase/climdevis-installation.sql` les contient déjà (y compris les espaces de stockage « plans » et « datasheets »).
+> `supabase/migrations/20261115000010_multi_suppliers.sql`, `supabase/migrations/20261116000011_plans.sql` puis
+> `supabase/migrations/20261117000012_placement_and_site.sql`.
+> Une installation neuve avec `supabase/climdevis-installation.sql` les contient déjà (y compris les espaces de stockage « plans », « datasheets » et « chantier »).
 
 ---
 

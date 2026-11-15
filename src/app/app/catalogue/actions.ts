@@ -223,3 +223,38 @@ export async function setDatasheet(productId: string, file: { path: string; name
   revalidatePath(`/app/catalogue/materiel/${productId}`);
   return { ok: true, message: file ? "Fiche technique enregistrée ✔ (jointe aux devis qui contiennent ce produit)" : "Fiche technique retirée ✔" };
 }
+
+export interface ProductTechForm {
+  refrigerant: string;
+  factoryChargeKg: string;
+  maxLinkM: string;
+  maxHeightDiffM: string;
+  clearances: Record<"top" | "left" | "right" | "bottom" | "front" | "rear", string>;
+}
+
+/** Données de pose de la notice (règles d'implantation, fiche fluides). */
+export async function saveProductTech(productId: string, f: ProductTechForm): Promise<ActionResult> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
+  const { supabase, company } = await getCurrentCompany();
+  if (!UUID.test(productId)) return { ok: false, message: "Produit introuvable." };
+  const num = (v: string, min: number, max: number): number | null | "bad" => {
+    if (v.trim() === "") return null;
+    const n = Number(v.replace(",", ".").replace(/\s/g, ""));
+    return Number.isFinite(n) && n >= min && n <= max ? n : "bad";
+  };
+  const charge = num(f.factoryChargeKg, 0.05, 99);
+  const link = num(f.maxLinkM, 1, 300);
+  const diff = num(f.maxHeightDiffM, 0, 100);
+  if (charge === "bad" || link === "bad" || diff === "bad") return { ok: false, message: "Valeur illisible (charge en kg, longueurs en m)." };
+  const clearances: Record<string, number> = {};
+  for (const [k, v] of Object.entries(f.clearances)) {
+    const n = num(v, 0, 500);
+    if (n === "bad") return { ok: false, message: "Dégagement illisible (en cm)." };
+    if (n !== null && n > 0) clearances[k] = Math.round(n);
+  }
+  const refrigerant = ["R32", "R410A", "R290", "R454B", "autre"].includes(f.refrigerant) ? f.refrigerant : null;
+  const { error } = await supabase.from("products").update({ refrigerant, factory_charge_kg: charge, max_link_m: link, max_height_diff_m: diff, clearances }).eq("company_id", company.id).eq("id", productId);
+  if (error) return { ok: false, message: "Enregistrement impossible. Réessayez." };
+  revalidatePath(`/app/catalogue/materiel/${productId}`);
+  return { ok: true, message: "Données de pose enregistrées ✔" };
+}

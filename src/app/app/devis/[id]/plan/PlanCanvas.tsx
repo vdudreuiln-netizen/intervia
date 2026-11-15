@@ -7,7 +7,28 @@ import type { Pt } from "@/lib/plans/geometry";
  * Plan affiché en SVG (coordonnées = pixels de l'image), zoom par boutons,
  * défilement au doigt. `onPoint` reçoit les coordonnées du plan du point touché.
  */
-export function PlanCanvas({ imageUrl, width, height, onPoint, children, cursor = "default" }: { imageUrl: string; width: number; height: number; onPoint?: (p: Pt) => void; children?: ReactNode; cursor?: string }) {
+export function PlanCanvas({
+  imageUrl,
+  width,
+  height,
+  onPoint,
+  onMove,
+  onUp,
+  dragging = false,
+  children,
+  cursor = "default",
+}: {
+  imageUrl: string;
+  width: number;
+  height: number;
+  onPoint?: (p: Pt) => void;
+  /** Déplacement au doigt d'un repère (pendant `dragging`). */
+  onMove?: (p: Pt) => void;
+  onUp?: () => void;
+  dragging?: boolean;
+  children?: ReactNode;
+  cursor?: string;
+}) {
   const [zoom, setZoom] = useState(1);
   const svg = useRef<SVGSVGElement>(null);
   const toPlan = (clientX: number, clientY: number): Pt | null => {
@@ -30,10 +51,17 @@ export function PlanCanvas({ imageUrl, width, height, onPoint, children, cursor 
         <svg
           ref={svg}
           viewBox={`0 0 ${width} ${height}`}
-          style={{ width: `${zoom * 100}%`, cursor, touchAction: zoom > 1 ? "pan-x pan-y" : "auto" }}
+          style={{ width: `${zoom * 100}%`, cursor, touchAction: dragging ? "none" : zoom > 1 ? "pan-x pan-y" : "auto" }}
           className="block h-auto select-none"
+          onPointerMove={(e) => {
+            if (!dragging || !onMove) return;
+            const p = toPlan(e.clientX, e.clientY);
+            if (p) onMove(p);
+          }}
+          onPointerUp={() => dragging && onUp?.()}
+          onPointerLeave={() => dragging && onUp?.()}
           onClick={(e) => {
-            if (!onPoint) return;
+            if (!onPoint || dragging) return;
             const p = toPlan(e.clientX, e.clientY);
             if (p) onPoint(p);
           }}

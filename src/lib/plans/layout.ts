@@ -9,7 +9,8 @@
 import type { Equipment, Metre } from "@/lib/quote/types";
 import { polylineLength, type Pt } from "./geometry";
 
-export type MarkerKind = "ui" | "ue" | "bouche" | "grille" | "tableau" | "evacuation";
+export type MarkerKind = "ui" | "ue" | "bouche" | "grille" | "tableau" | "evacuation" | "chaleur" | "lit" | "canape" | "bureau" | "rue" | "voisin";
+export type UeMount = "sol" | "mural_bas" | "mural_haut" | "toiture";
 export type RouteKind = "liaison" | "condensats" | "goulotte" | "electrique" | "gaine";
 
 export interface Marker {
@@ -19,6 +20,28 @@ export interface Marker {
   y: number;
   /** ui : clé de l'unité intérieure ; ue : clé du système ; bouche / grille : clé du gainable. */
   equipmentKey: string | null;
+  /** Sens du soufflage (unité intérieure) : degrés, sens horaire depuis le haut du plan. */
+  angle?: number;
+  /** Pourquoi la suggestion est placée là (une ligne). */
+  reason?: string;
+  /** Proposé automatiquement (pas encore déplacé par l'artisan). */
+  suggested?: boolean;
+  /** Unité intérieure : distance sous le plafond, en cm. */
+  gapCm?: number;
+  /** Unité extérieure : type de pose. */
+  mount?: UeMount;
+  /** Évacuation : hauteur de l'entrée d'eau au-dessus du sol, en m. */
+  heightM?: number;
+  /** Points vérifiés sur place (« degagements », « acces »…). */
+  confirmed?: string[];
+}
+
+/** Règle impérative forcée par l'artisan, avec son motif. */
+export interface Override {
+  ruleId: string;
+  elementId: string;
+  reason: string;
+  at: string;
 }
 
 export interface Route {
@@ -34,9 +57,10 @@ export interface Route {
 export interface Layout {
   markers: Marker[];
   routes: Route[];
+  overrides?: Override[];
 }
 
-export const EMPTY_LAYOUT: Layout = { markers: [], routes: [] };
+export const EMPTY_LAYOUT: Layout = { markers: [], routes: [], overrides: [] };
 
 export const MARKER_LABELS: Record<MarkerKind, string> = {
   ui: "Unité intérieure",
@@ -45,7 +69,16 @@ export const MARKER_LABELS: Record<MarkerKind, string> = {
   grille: "Grille de reprise",
   tableau: "Tableau électrique",
   evacuation: "Évacuation des condensats",
+  chaleur: "Source de chaleur (cuisinière, poêle, chaudière)",
+  lit: "Lit",
+  canape: "Canapé",
+  bureau: "Bureau",
+  rue: "Côté rue",
+  voisin: "Voisin / limite de propriété",
 };
+
+/** Repères d'environnement : placés par l'artisan, utilisés par les règles. */
+export const CONTEXT_MARKERS: MarkerKind[] = ["chaleur", "lit", "canape", "bureau", "rue", "voisin"];
 
 export const ROUTE_LABELS: Record<RouteKind, string> = {
   liaison: "Liaison frigorifique",
@@ -87,7 +120,8 @@ export function markerTag(m: Marker, all: Marker[], tags: ReturnType<typeof equi
   if (m.kind === "ue") return tags.outdoor.get(m.equipmentKey ?? "") ?? "E?";
   const same = all.filter((x) => x.kind === m.kind);
   const n = same.findIndex((x) => x.id === m.id) + 1;
-  return { bouche: "B", grille: "G", tableau: "T", evacuation: "C" }[m.kind] + (same.length > 1 ? String(n) : "");
+  const letter: Record<string, string> = { bouche: "B", grille: "G", tableau: "T", evacuation: "C", chaleur: "🔥", lit: "Lit", canape: "Ca", bureau: "Bu", rue: "Rue", voisin: "V" };
+  return (letter[m.kind] ?? "?") + (same.length > 1 && !CONTEXT_MARKERS.includes(m.kind) ? String(n) : "");
 }
 
 export interface PlanLayout {
@@ -191,11 +225,26 @@ export function sanitizeLayout(raw: unknown, size: { width: number; height: numb
   const kinds = new Set<string>(Object.keys(MARKER_LABELS));
   const rkinds = new Set<string>(Object.keys(ROUTE_LABELS));
   const str = (v: unknown, max = 80) => (typeof v === "string" ? v.slice(0, max) : "");
+  const mounts = new Set(["sol", "mural_bas", "mural_haut", "toiture"]);
+  const num = (v: unknown, min: number, max: number) => (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : undefined);
   return {
     markers: (Array.isArray(L.markers) ? L.markers : [])
-      .slice(0, 200)
+      .slice(0, 300)
       .filter((m) => m && kinds.has(m.kind) && inside(m))
-      .map((m) => ({ id: str(m.id) || crypto.randomUUID(), kind: m.kind, x: m.x, y: m.y, equipmentKey: m.equipmentKey ? str(m.equipmentKey) : null })),
+      .map((m) => {
+        const out: Marker = { id: str(m.id) || crypto.randomUUID(), kind: m.kind, x: m.x, y: m.y, equipmentKey: m.equipmentKey ? str(m.equipmentKey) : null };
+        const angle = num(m.angle, -720, 720);
+        if (angle !== undefined) out.angle = ((angle % 360) + 360) % 360;
+        if (m.reason) out.reason = str(m.reason, 200);
+        if (m.suggested) out.suggested = true;
+        const gap = num(m.gapCm, 0, 200);
+        if (gap !== undefined) out.gapCm = gap;
+        if (typeof m.mount === "string" && mounts.has(m.mount)) out.mount = m.mount;
+        const h = num(m.heightM, 0, 10);
+        if (h !== undefined) out.heightM = h;
+        if (Array.isArray(m.confirmed)) out.confirmed = m.confirmed.filter((c): c is string => typeof c === "string").slice(0, 10).map((c) => c.slice(0, 40));
+        return out;
+      }),
     routes: (Array.isArray(L.routes) ? L.routes : [])
       .slice(0, 200)
       .filter((r) => r && rkinds.has(r.kind) && typeof r.equipmentKey === "string" && Array.isArray(r.points))
@@ -206,5 +255,9 @@ export function sanitizeLayout(raw: unknown, size: { width: number; height: numb
         points: r.points.filter(inside).slice(0, 100).map((p) => ({ x: p.x, y: p.y })),
         extraM: typeof r.extraM === "number" && Number.isFinite(r.extraM) ? Math.min(50, Math.max(0, r.extraM)) : 0,
       })),
+    overrides: (Array.isArray(L.overrides) ? L.overrides : [])
+      .slice(0, 100)
+      .filter((o) => o && typeof o.ruleId === "string" && typeof o.elementId === "string" && typeof o.reason === "string" && o.reason.trim().length >= 3)
+      .map((o) => ({ ruleId: str(o.ruleId, 40), elementId: str(o.elementId), reason: str(o.reason, 300).trim(), at: str(o.at, 40) || new Date().toISOString() })),
   };
 }

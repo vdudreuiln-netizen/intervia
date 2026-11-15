@@ -78,6 +78,11 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
       <h1 className="text-3xl font-extrabold">
         {q.number} · {q.project.client.name}
       </h1>
+      {q.status === "accepte" && (
+        <LinkButton href={`/app/chantiers/${id}`} full>
+          🛠️ Ouvrir le chantier (pose, photos, écarts, réception)
+        </LinkButton>
+      )}
       {rows.length === 0 ? (
         <LinkButton href={`/app/devis/${id}`} full>
           Continuer le chiffrage

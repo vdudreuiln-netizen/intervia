@@ -24,6 +24,9 @@ export default async function ParametresPage() {
         <LinkButton href="/app/abonnement" variant="secondary" full>
           Abonnement →
         </LinkButton>
+        <LinkButton href="/app/parametres/implantation" variant="secondary" full>
+          Règles d&apos;implantation et attestation fluides
+        </LinkButton>
         <LinkButton href="/app/parametres/coefficients" variant="secondary" full>
           Coefficients →
         </LinkButton>

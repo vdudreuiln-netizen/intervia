@@ -5,8 +5,7 @@ import { readOnlyError } from "@/lib/billing/guard";
 import { getCurrentCompany } from "@/lib/company/current";
 import { costAccess } from "@/lib/security/costs";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { loadCoefficients, loadQuote, loadWizardCatalog } from "@/lib/quote/load";
-import { fromSelection } from "@/lib/quote/equipment";
+import { loadCoefficients, loadQuote } from "@/lib/quote/load";
 import { parseRooms, type RoomForm } from "@/lib/quote/rooms";
 import { EMPTY_METRE, type IndoorChoice } from "@/lib/quote/types";
 import type { Insulation, Orientation } from "@/lib/sizing/sizing";
@@ -14,6 +13,8 @@ import { draftFromAnalysis, draftScale, draftTotalArea, sanitizeDraft, type Plan
 import { checkTotalArea } from "@/lib/plans/geometry";
 import { layoutChecklist, metreFromLayouts, sanitizeLayout, type Layout, type MetreReportLine } from "@/lib/plans/layout";
 import { analyzePlanImage, PlanAnalysisError } from "@/lib/plans/analyze.server";
+import { autoToggles, blocking, evaluateRules, type Finding } from "@/lib/plans/rules";
+import { loadRuleContext } from "@/lib/plans/rules.server";
 import { LEVEL_LABELS } from "@/lib/quote/rooms";
 
 const FAIL = "Enregistrement impossible. Réessayez.";
@@ -185,10 +186,12 @@ export async function applyPlanRooms(quoteId: string, level: number, rooms: Plan
 }
 
 /**
- * Enregistre l'implantation d'un niveau et reporte les longueurs de TOUS les
- * niveaux dans le métré de l'assistant (les valeurs non tracées sont conservées).
+ * Enregistre l'implantation d'un niveau, contrôle les règles sur TOUS les
+ * niveaux et reporte les longueurs dans le métré (valeurs non tracées
+ * conservées ; pompe de relevage cochée si la pente gravitaire est impossible).
+ * `validate` : refuse tant qu'une règle impérative n'est ni respectée ni forcée avec un motif.
  */
-export async function saveLayout(quoteId: string, level: number, raw: unknown): Promise<Result<{ report: MetreReportLine[]; warnings: string[]; todo: string[] }>> {
+export async function saveLayout(quoteId: string, level: number, raw: unknown, validate = false): Promise<Result<{ report: MetreReportLine[]; warnings: string[]; todo: string[]; findings: Finding[]; validated: boolean }>> {
   const r = await ctx(quoteId);
   if ("error" in r) return r.error!;
   const { c, q } = r;
@@ -196,22 +199,32 @@ export async function saveLayout(quoteId: string, level: number, raw: unknown): 
   if (!plan) return { ok: false, message: "Plan introuvable." };
   if (!q.wizard.selection) return { ok: false, message: "Choisissez d'abord une solution (étape 4)." };
   const layout: Layout = sanitizeLayout(raw, { width: plan.width_px, height: plan.height_px });
-  const { error } = await c.supabase.from("quote_plans").update({ layout, updated_at: new Date().toISOString() }).eq("id", plan.id);
+  // Les repères proposés et enregistrés sont désormais ceux de l'artisan
+  layout.markers = layout.markers.map((m) => ({ ...m, suggested: undefined }));
+  const { error } = await c.supabase.from("quote_plans").update({ layout, layout_validated_at: null, updated_at: new Date().toISOString() }).eq("id", plan.id);
   if (error) return { ok: false, message: FAIL };
 
   const { db, companyId } = await costAccess();
-  const catalog = await loadWizardCatalog(db, companyId);
-  const equipment = fromSelection(q.wizard.selection, catalog.products);
-  if (!equipment) return { ok: false, message: "Un produit choisi n'existe plus : refaites le choix à l'étape 4." };
-  const { data: plans } = await c.supabase.from("quote_plans").select("level, scale_m_per_px, layout, width_px, height_px").eq("quote_id", quoteId);
-  const all = (plans ?? []).map((p) => ({ level: p.level, mPerPx: p.scale_m_per_px === null ? null : Number(p.scale_m_per_px), layout: p.level === level ? layout : sanitizeLayout(p.layout, { width: p.width_px, height: p.height_px }) }));
-  const { metre, report, warnings } = metreFromLayouts(all, equipment, q.wizard.metre ?? EMPTY_METRE);
+  const rc = await loadRuleContext(c.supabase, db, companyId, q, c.company.placement_rules);
+  if (!rc) return { ok: false, message: "Un produit choisi n'existe plus : refaites le choix à l'étape 4." };
+  const findings = evaluateRules(rc);
+  const all = rc.plans.map((p) => ({ level: p.level, mPerPx: p.mPerPx, layout: p.layout }));
+  // Équipement complet (non nettoyé) inutile ici : seules clés et types servent au métré
+  const { metre, report, warnings } = metreFromLayouts(all, rc.equipment, q.wizard.metre ?? EMPTY_METRE);
+  for (const [k, on] of Object.entries(autoToggles(findings))) metre.toggles[k] = on;
   if (!warnings.length) {
     const { error: wErr } = await c.supabase.from("quotes").update({ wizard: { ...q.wizard, metre } }).eq("id", quoteId);
     if (wErr) return { ok: false, message: FAIL };
   }
+  let validated = false;
+  if (validate) {
+    const red = blocking(findings);
+    if (red.length) return { ok: false, message: `${red.length} règle${red.length > 1 ? "s" : ""} impérative${red.length > 1 ? "s" : ""} à corriger ou à forcer avec un motif avant de valider.` };
+    await c.supabase.from("quote_plans").update({ layout_validated_at: new Date().toISOString() }).eq("quote_id", quoteId);
+    validated = true;
+  }
   revalidatePath(`/app/devis/${quoteId}`);
-  return { ok: true, report, warnings, todo: layoutChecklist(all, equipment) };
+  return { ok: true, report, warnings, todo: layoutChecklist(all, rc.equipment), findings, validated };
 }
 
 /** Surface totale du logement (contrôle des 10 %). */
