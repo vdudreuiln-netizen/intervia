@@ -27,12 +27,40 @@ describe("import d'un vrai fichier Excel fournisseur", () => {
     const plan = buildPlan(
       "materiel",
       rows,
-      [{ id: "p1", brand: "Exemple – Arctica", reference: "ARC-UE35", label: "Arctica UE35", public_price_cents: 109000, discount_rate: 0.42 }],
+      [
+        {
+          id: "p1",
+          brand: "Exemple – Arctica",
+          reference: "ARC-UE35",
+          label: "Arctica UE35",
+          offer: {
+            public_price_cents: 109000,
+            net_price_cents: null,
+            discount_rate: 0.42,
+            match_status: "certain",
+          },
+        },
+      ],
       ["Exemple – Arctica"],
       errors,
     );
-    expect(plan.summary).toMatchObject({ newItems: 2, priceChanges: 1, bigIncreases: 1, errors: 1 });
-    expect(plan.updates[0]).toEqual({ id: "p1", public_price_cents: 117720, cooling_kw: 3.5, heating_kw: 4 });
-    expect(plan.brandsToCreate).toEqual([{ name: "Borée", discount_rate: null }]);
+    expect(plan.summary).toMatchObject({
+      newItems: 2,
+      priceChanges: 1,
+      bigIncreases: 1,
+      errors: 1,
+    });
+    expect(plan.updates[0]).toEqual({
+      id: "p1",
+      cooling_kw: 3.5,
+      heating_kw: 4,
+    });
+    expect(plan.offers[0]).toMatchObject({
+      item_id: "p1",
+      public_price_cents: 117720,
+      match_status: "certain",
+    });
+    expect("discount_rate" in plan.offers[0]!).toBe(false);
+    expect(plan.brandsToCreate).toEqual([{ name: "Borée" }]);
   });
 });

@@ -37,27 +37,25 @@ export function DocumentPanel({ quoteId, options, companyDepositRate }: { quoteI
           { value: "detaille", label: "Détaillé", hint: "Chaque article sur sa ligne avec son prix (assurances, clients exigeants)" },
         ]}
       />
-      <Check
-        label="Signé chez le client"
-        hint="Droit de rétractation de 14 jours, formulaire joint, aucun paiement avant 7 jours"
-        checked={o.signedOffPremises}
-        onChange={(v) => setO({ ...o, signedOffPremises: v })}
-      />
+      <Check label="Signé chez le client" hint="Droit de rétractation de 14 jours, formulaire joint, aucun paiement avant 7 jours" checked={o.signedOffPremises} onChange={(v) => setO({ ...o, signedOffPremises: v })} />
       {o.signedOffPremises && !o.urgentRepair && (
-        <Check
-          label="Le client demande le démarrage avant la fin des 14 jours"
-          hint="Ajoute sa demande expresse à signer (art. L221-25)"
-          checked={o.earlyStart}
-          onChange={(v) => setO({ ...o, earlyStart: v })}
-        />
+        <Check label="Le client demande le démarrage avant la fin des 14 jours" hint="Ajoute sa demande expresse à signer (art. L221-25)" checked={o.earlyStart} onChange={(v) => setO({ ...o, earlyStart: v })} />
       )}
+      <Check label="Dépannage urgent demandé par le client" hint="Pas de droit de rétractation pour les réparations strictement nécessaires à l'urgence (art. L221-28, 8°)" checked={o.urgentRepair} onChange={(v) => setO({ ...o, urgentRepair: v })} />
       <Check
-        label="Dépannage urgent demandé par le client"
-        hint="Pas de droit de rétractation pour les réparations strictement nécessaires à l'urgence (art. L221-28, 8°)"
-        checked={o.urgentRepair}
-        onChange={(v) => setO({ ...o, urgentRepair: v })}
+        label="Paiement en plusieurs échéances"
+        checked={rows !== null}
+        onChange={(v) =>
+          setRows(
+            v
+              ? DEFAULT_SCHEDULE.map((s) => ({
+                  label: s.label,
+                  rate: decimalToInput(s.rate * 100),
+                }))
+              : null,
+          )
+        }
       />
-      <Check label="Paiement en plusieurs échéances" checked={rows !== null} onChange={(v) => setRows(v ? DEFAULT_SCHEDULE.map((s) => ({ label: s.label, rate: decimalToInput(s.rate * 100) })) : null)} />
       {rows === null ? (
         <PercentField
           label="Acompte"

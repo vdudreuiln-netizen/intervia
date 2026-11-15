@@ -37,13 +37,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <main className="mx-auto max-w-3xl px-4 py-6">{children}</main>
       {company.onboarding_done && (
         <nav className="fixed inset-x-0 bottom-0 z-10 border-t-2 border-slate-300 bg-white" aria-label="Navigation principale">
-          <div className={`mx-auto grid max-w-3xl ${isAdmin ? "grid-cols-3" : "grid-cols-2"}`}>
+          <div className={`mx-auto grid max-w-3xl ${isAdmin ? "grid-cols-4" : "grid-cols-2"}`}>
             <Link href="/app" className="flex min-h-16 flex-col items-center justify-center text-base font-bold text-brand">
               <span aria-hidden className="text-2xl">📋</span>Devis
             </Link>
             <Link href="/app/catalogue" className="flex min-h-16 flex-col items-center justify-center text-base font-bold text-brand">
               <span aria-hidden className="text-2xl">📦</span>Catalogue
             </Link>
+            {isAdmin && (
+              <Link href="/app/fournisseurs" className="flex min-h-16 flex-col items-center justify-center text-base font-bold text-brand">
+                <span aria-hidden className="text-2xl">
+                  🚚
+                </span>
+                Fournisseurs
+              </Link>
+            )}
             {isAdmin && (
               <Link href="/app/parametres" className="flex min-h-16 flex-col items-center justify-center text-base font-bold text-brand">
                 <span aria-hidden className="text-2xl">⚙️</span>Paramètres

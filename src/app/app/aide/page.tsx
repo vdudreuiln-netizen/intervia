@@ -7,11 +7,30 @@ import { Card } from "@/components/ui";
 export const metadata: Metadata = { title: "Aide et contact" };
 
 const FAQ: { q: string; a: string }[] = [
-  { q: "Par où commencer ?", a: "Ouvrez le devis de démonstration dans « Mes devis », puis cliquez « + Nouveau devis » : client, pièces, puissances, solutions, métré, main d'œuvre. Comptez moins de 10 minutes." },
-  { q: "Comment mettre mes vrais prix ?", a: "Catalogue › « Importer un tarif » avec le fichier Excel de votre fournisseur, puis réglez vos remises dans l'onglet Marques. Supprimez ensuite le catalogue d'exemple." },
-  { q: "Pourquoi un bandeau rouge sur mon PDF ?", a: "Une mention obligatoire manque (médiateur de la consommation, SIRET ou assurance décennale). Complétez-la dans Paramètres : le bandeau disparaît." },
-  { q: "Mon client a signé chez lui : que faire ?", a: "Laissez cochée la case « Signé chez le client » : le devis inclut le formulaire de rétractation de 14 jours et l'acompte n'est payable qu'après 7 jours." },
-  { q: "Comment inviter un collègue ?", a: "Paramètres › Mon équipe › « Inviter un collègue ». Choisissez s'il voit ou non vos marges." },
+  {
+    q: "Par où commencer ?",
+    a: "Ouvrez le devis de démonstration dans « Mes devis », puis cliquez « + Nouveau devis » : client, pièces, puissances, solutions, métré, main d'œuvre. Comptez moins de 10 minutes.",
+  },
+  {
+    q: "Comment mettre mes vrais prix ?",
+    a: "Catalogue › « Importer un tarif » avec le fichier Excel, CSV ou PDF de chaque fournisseur, puis réglez vos remises dans Fournisseurs (par marque, par famille ou par référence). Supprimez ensuite le catalogue d'exemple.",
+  },
+  {
+    q: "J'achète chez plusieurs fournisseurs : comment ça marche ?",
+    a: "Importez le tarif de chacun. Le même article est reconnu chez tous (EAN ou référence fabricant). Dans chaque devis, le moins cher au total, frais de port compris, est retenu ; le prix client ne change pas. Vous pouvez imposer un fournisseur par ligne ou « tout chez X ». Devis accepté : un bon de commande par fournisseur.",
+  },
+  {
+    q: "Pourquoi un bandeau rouge sur mon PDF ?",
+    a: "Une mention obligatoire manque (médiateur de la consommation, SIRET ou assurance décennale). Complétez-la dans Paramètres : le bandeau disparaît.",
+  },
+  {
+    q: "Mon client a signé chez lui : que faire ?",
+    a: "Laissez cochée la case « Signé chez le client » : le devis inclut le formulaire de rétractation de 14 jours et l'acompte n'est payable qu'après 7 jours.",
+  },
+  {
+    q: "Comment inviter un collègue ?",
+    a: "Paramètres › Mon équipe › « Inviter un collègue ». Choisissez s'il voit ou non vos marges.",
+  },
 ];
 
 export default async function AidePage() {

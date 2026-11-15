@@ -25,9 +25,12 @@ import {
   type Mapping,
   type ProductType,
 } from "@/lib/catalog/import";
+import { reviewRowsToTable, type ReviewRow } from "@/lib/suppliers/pdf-tariff";
 import { commitImport, previewImport, type ImportRequest, type PreviewResult } from "./actions";
+import { PdfImport } from "./PdfImport";
 
 interface SupplierOpt {
+  id: string;
   name: string;
   mapping: Partial<Record<ImportTarget, Mapping>>;
 }
@@ -47,15 +50,27 @@ async function readFile(file: File): Promise<Cell[][]> {
     if (text.includes("�")) text = new TextDecoder("windows-1252").decode(buf);
     return parseCsv(text);
   }
-  throw new Error(name.endsWith(".xls") ? "Ancien format .xls : ouvrez le fichier dans Excel et enregistrez-le en .xlsx." : name.endsWith(".pdf") ? "Les PDF ne sont pas lisibles automatiquement : demandez le tarif en Excel à votre fournisseur." : "Format non reconnu : choisissez un fichier .xlsx ou .csv.");
+  throw new Error(name.endsWith(".xls") ? "Ancien format .xls : ouvrez le fichier dans Excel et enregistrez-le en .xlsx." : "Format non reconnu : choisissez un fichier .xlsx, .csv ou .pdf.");
+}
+
+async function fileHash(file: File): Promise<string | null> {
+  try {
+    const d = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return null;
+  }
 }
 
 const serialize = (c: Cell): string | number | null => (c === null || c === undefined ? null : typeof c === "number" ? c : cellText(c));
 
 export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarget: ImportTarget; suppliers: SupplierOpt[]; brands: string[] }) {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | "pdf" | 2 | 3 | 4>(1);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [source, setSource] = useState<"tableur" | "pdf">("tableur");
+  const [hash, setHash] = useState<string | null>(null);
   const [target, setTarget] = useState<ImportTarget>(initialTarget);
-  const [supplierChoice, setSupplierChoice] = useState(suppliers[0]?.name ?? NEW_SUPPLIER);
+  const [supplierChoice, setSupplierChoice] = useState(suppliers[0]?.id ?? NEW_SUPPLIER);
   const [newSupplier, setNewSupplier] = useState("");
   const [file, setFile] = useState<{ name: string; table: Cell[][] } | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -67,8 +82,9 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
   const [done, setDone] = useState<{ ok: boolean; message: string } | null>(null);
   const [pending, start] = useTransition();
 
-  const supplierName = supplierChoice === NEW_SUPPLIER ? newSupplier.trim() : supplierChoice;
-  const remembered = suppliers.find((s) => s.name === supplierName)?.mapping[target];
+  const chosen = suppliers.find((s) => s.id === supplierChoice);
+  const supplierName = supplierChoice === NEW_SUPPLIER ? newSupplier.trim() : (chosen?.name ?? "");
+  const remembered = source === "pdf" ? undefined : chosen?.mapping[target];
   const headers = useMemo(() => (file ? (file.table[headerIndex] ?? []).map(cellText) : []), [file, headerIndex]);
   const sample = (col?: string): Cell => {
     if (!file || !col) return null;
@@ -99,6 +115,14 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
 
   async function onFile(f: File) {
     setFileError(null);
+    if (f.name.toLowerCase().endsWith(".pdf") || f.type === "application/pdf") {
+      setPdfFile(f);
+      setFile(null);
+      return;
+    }
+    setPdfFile(null);
+    setSource("tableur");
+    setHash(await fileHash(f));
     try {
       const table = await readFile(f);
       if (table.length < 2) throw new Error("Le fichier semble vide.");
@@ -113,8 +137,36 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
   }
 
   function request(): ImportRequest {
-    const rows = projectRows(file!.table, headerIndex, mapping).map((r) => ({ line: r.line, cells: Object.fromEntries(Object.entries(r.cells).map(([k, v]) => [k, serialize(v)])) }));
-    return { target, supplierName, filename: file!.name, mapping, defaults, rows };
+    const rows = projectRows(file!.table, headerIndex, mapping).map((r) => ({
+      line: r.line,
+      cells: Object.fromEntries(Object.entries(r.cells).map(([k, v]) => [k, serialize(v)])),
+    }));
+    return {
+      target,
+      supplierId: chosen?.id ?? null,
+      supplierName,
+      filename: file!.name,
+      fileHash: hash,
+      source,
+      mapping,
+      defaults,
+      rows,
+    };
+  }
+
+  function onPdfValidated(rows: ReviewRow[], h: string) {
+    const { table, mapping: m } = reviewRowsToTable(rows, target);
+    setFile({ name: pdfFile!.name, table });
+    setHeaderIndex(0);
+    setMapping(m);
+    setSource("pdf");
+    setHash(h);
+    setStep(2);
+    window.scrollTo({ top: 0 });
+  }
+
+  if (step === "pdf" && pdfFile) {
+    return <PdfImport file={pdfFile} target={target} onCancel={() => setStep(1)} onValidated={onPdfValidated} />;
   }
 
   // ----- Étape 1 : fichier ---------------------------------------------------
@@ -128,6 +180,7 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
             onChange={(v) => {
               setTarget(v);
               setFile(null);
+              setPdfFile(null);
             }}
             options={[
               { value: "materiel", label: "Matériel", hint: "Unités extérieures et intérieures" },
@@ -138,26 +191,27 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
             label="Fournisseur"
             value={supplierChoice}
             onChange={setSupplierChoice}
-            options={[...suppliers.map((s) => ({ value: s.name, label: s.name })), { value: NEW_SUPPLIER, label: "+ Nouveau fournisseur" }]}
+            options={[...suppliers.map((s) => ({ value: s.id, label: s.name })), { value: NEW_SUPPLIER, label: "+ Nouveau fournisseur" }]}
             hint="La correspondance des colonnes est mémorisée pour chaque fournisseur"
             placeholder="Choisir…"
           />
           {supplierChoice === NEW_SUPPLIER && <Field label="Nom du fournisseur" value={newSupplier} onChange={setNewSupplier} placeholder="Ex. : distributeur, grossiste…" />}
           <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-brand bg-brand-light px-4 text-center text-lg font-bold text-brand">
-            {file ? `✔ ${file.name}` : "📄 Choisir le fichier (.xlsx ou .csv)"}
+            {file ? `✔ ${file.name}` : pdfFile ? `✔ ${pdfFile.name}` : "📄 Choisir le fichier (.xlsx, .csv ou .pdf)"}
             {file && <span className="text-base font-normal">{file.table.length} lignes lues · toucher pour changer</span>}
-            <input type="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+            {pdfFile && <span className="text-base font-normal">Tarif PDF : lecture automatique à l&apos;étape suivante · toucher pour changer</span>}
+            <input type="file" accept=".xlsx,.csv,.txt,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
           </label>
           {fileError && <Notice tone="danger">{fileError}</Notice>}
-          <p className="text-base text-slate-600">Excel : seule la première feuille est lue. Tarif en PDF ? Demandez-le en Excel à votre fournisseur, ou recopiez-le dans notre modèle.</p>
+          <p className="text-base text-slate-600">Excel : seule la première feuille est lue. Tarif uniquement en PDF : il est lu automatiquement (quota de pages par mois selon votre formule) ; le tarif Excel / CSV reste gratuit et illimité.</p>
           <a href={`/app/catalogue/modele/${target}`} className="block text-lg font-bold text-brand underline underline-offset-4">
             Télécharger le modèle {target === "materiel" ? "matériel" : "accessoires"} (CSV pour Excel)
           </a>
         </Card>
-        <Button type="button" full disabled={!file || !supplierName} onClick={() => setStep(2)}>
-          Suivant : les colonnes
+        <Button type="button" full disabled={(!file && !pdfFile) || !supplierName} onClick={() => setStep(pdfFile ? "pdf" : 2)}>
+          {pdfFile ? "Suivant : choisir les pages" : "Suivant : les colonnes"}
         </Button>
-        {file && !supplierName && <p className="text-center text-base text-danger">Indiquez le fournisseur.</p>}
+        {(file || pdfFile) && !supplierName && <p className="text-center text-base text-danger">Indiquez le fournisseur.</p>}
       </div>
     );
   }
@@ -170,6 +224,7 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
       <div className="space-y-6">
         <Card title="2. Quelle colonne contient quoi ?">
           {remembered && <Notice tone="ok">Correspondance de « {supplierName} » reprise du dernier import.</Notice>}
+          {source === "pdf" && <Notice tone="ok">Colonnes issues de la lecture du PDF : déjà associées.</Notice>}
           <Select
             label="Ligne des titres de colonnes"
             value={String(headerIndex)}
@@ -229,7 +284,7 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
           </Notice>
         )}
         <div className="flex flex-col-reverse gap-3 sm:flex-row">
-          <Button type="button" variant="secondary" onClick={() => setStep(1)} disabled={pending}>
+          <Button type="button" variant="secondary" onClick={() => setStep(source === "pdf" ? "pdf" : 1)} disabled={pending}>
             Précédent
           </Button>
           <Button
@@ -265,7 +320,21 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
     const tiles: { label: string; value: number; tone?: "danger" | "ok" }[] = [
       { label: "prix modifiés", value: s.priceChanges },
       { label: `nouveaux ${item}s`, value: s.newItems, tone: "ok" },
-      { label: `hausses de plus de ${formatPercent(BIG_INCREASE, 0)}`, value: s.bigIncreases, tone: s.bigIncreases ? "danger" : undefined },
+      {
+        label: "déjà au catalogue, nouveaux chez ce fournisseur",
+        value: s.newOffers,
+        tone: "ok",
+      },
+      {
+        label: "correspondances probables à confirmer",
+        value: s.probable,
+        tone: s.probable ? "danger" : undefined,
+      },
+      {
+        label: `hausses de plus de ${formatPercent(BIG_INCREASE, 0)}`,
+        value: s.bigIncreases,
+        tone: s.bigIncreases ? "danger" : undefined,
+      },
       { label: "baisses de prix", value: s.decreases },
       { label: "remises modifiées", value: s.discountChanges },
       { label: "inchangés", value: s.unchanged },
@@ -284,8 +353,12 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
               </div>
             ))}
           </div>
-          {(preview.newBrands?.length ?? 0) > 0 && <Notice>Nouvelles marques créées : {preview.newBrands!.join(", ")} (remise 0 %, à régler dans l&apos;onglet Marques).</Notice>}
-          <p className="text-base text-slate-700">Les remises que vous avez saisies sont conservées quand le fichier n&apos;en contient pas. Les anciens prix sont gardés dans l&apos;historique.</p>
+          {preview.alreadyImportedAt && <Notice tone="danger">Ce même fichier a déjà été importé chez ce fournisseur le {new Date(preview.alreadyImportedAt).toLocaleDateString("fr-FR")}.</Notice>}
+          {(preview.newBrands?.length ?? 0) > 0 && <Notice>Nouvelles marques créées : {preview.newBrands!.join(", ")} (remises à régler dans Fournisseurs).</Notice>}
+          <p className="text-base text-slate-700">
+            Les remises que vous avez saisies sont conservées quand le fichier n&apos;en contient pas. Les anciens prix sont gardés dans l&apos;historique. Un article déjà connu chez un autre fournisseur (même EAN ou même référence) reçoit simplement
+            un tarif de plus : le moins cher sera retenu dans vos devis.
+          </p>
         </Card>
 
         {(preview.priceChanges?.length ?? 0) > 0 && (
@@ -301,6 +374,19 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
                       {formatPercent(c.change)})
                     </span>
                   </p>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+
+        {(preview.probable?.length ?? 0) > 0 && (
+          <Card title="Correspondances probables (à confirmer après l'import)">
+            <p className="text-base text-slate-700">Références presque identiques (suffixe différent). Elles ne sont pas utilisées dans les prix tant que vous ne les avez pas confirmées dans Fournisseurs.</p>
+            <ul className="divide-y-2 divide-slate-200">
+              {preview.probable!.map((m) => (
+                <li key={m.line} className="py-2 text-base">
+                  <strong>{m.label}</strong> (ligne {m.line}) ≈ {m.candidateLabel}
                 </li>
               ))}
             </ul>
@@ -327,7 +413,7 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
           <Button
             type="button"
             full
-            disabled={pending || s.newItems + s.priceChanges + s.discountChanges === 0}
+            disabled={pending || s.newItems + s.newOffers + s.probable + s.priceChanges + s.discountChanges === 0}
             onClick={() =>
               start(async () => {
                 const r = await commitImport(request());
@@ -336,7 +422,7 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
               })
             }
           >
-            {pending ? "Import en cours…" : s.newItems + s.priceChanges + s.discountChanges === 0 ? "Rien à importer" : "Valider l'import"}
+            {pending ? "Import en cours…" : s.newItems + s.newOffers + s.probable + s.priceChanges + s.discountChanges === 0 ? "Rien à importer" : "Valider l'import"}
           </Button>
         </div>
       </div>

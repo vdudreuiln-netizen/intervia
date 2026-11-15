@@ -10,7 +10,13 @@ import type { CatAccessory, CatProduct, Equipment } from "./types";
 
 /** Produit sans coût : remises neutralisées (le prix de vente = prix public × coefficient n'en dépend pas). */
 export function sanitizeProduct(p: CatProduct): CatProduct {
-  return { ...p, brandDiscount: 0, productDiscount: null, costHidden: true };
+  return {
+    ...p,
+    brandDiscount: 0,
+    productDiscount: null,
+    netPurchaseCents: null,
+    costHidden: true,
+  };
 }
 
 /** Accessoire sans coût : prix de vente figé côté serveur (coefficients du devis compris). */
@@ -23,6 +29,8 @@ export function sanitizeAccessory(a: CatAccessory, s: LineSettings): CatAccessor
     companyCoefficient: s.companyAccessoryCoefficient,
     purchaseCoefficient: s.accessoryPurchaseCoefficient,
     quoteCoefficient: s.accessoryCoefficient,
+    netPurchaseCents: a.netPurchaseCents,
+    floorPurchaseCents: a.floorPurchaseCents,
   }).saleCents;
   return { id: a.id, role: a.role, category: a.category, name: a.name, diameter: a.diameter, unit: a.unit, publicPriceCents: null, purchasePriceCents: null, discount: 0, fixedSaleCents: sale };
 }
@@ -37,6 +45,7 @@ export function sanitizeResult(r: QuoteResult): QuoteResult {
       purchaseCostCents: 0,
       laborChargesCents: 0,
       materialChargesCents: 0,
+      shippingCostCents: 0,
       netMarginCents: 0,
       netMarginRate: 0,
       marginPerDayCents: null,

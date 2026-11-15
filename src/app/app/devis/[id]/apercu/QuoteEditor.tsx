@@ -12,6 +12,10 @@ import type { WizardState } from "@/lib/quote/types";
 import { DocumentPanel, SharePanel } from "./DocumentPanel";
 import { MarginPanel } from "./MarginPanel";
 import { MarginBar } from "../MarginBar";
+import { SupplierPanel } from "./SupplierPanel";
+import { OrdersPanel } from "./OrdersPanel";
+import type { QuoteSupplierView } from "@/lib/suppliers/quote";
+import type { PurchaseOrderSummary } from "../../actions";
 
 interface Props {
   quoteId: string;
@@ -30,6 +34,12 @@ interface Props {
   /** Technicien sans accès aux marges : alertes et lignes sous le coût calculées par le serveur. */
   serverAlerts?: QuoteAlert[] | null;
   belowCostIds?: string[] | null;
+  /** Frais de port non refacturés (déduits de la marge). */
+  shippingCostCents?: number;
+  /** Fournisseurs et bons de commande : membres autorisés seulement. */
+  supplierView?: QuoteSupplierView | null;
+  purchaseOrders?: PurchaseOrderSummary[] | null;
+  hasSiteAddress?: boolean;
 }
 
 const VAT_OPTIONS = [
@@ -38,13 +48,39 @@ const VAT_OPTIONS = [
   { value: "0.2", label: "TVA 20 %" },
 ];
 
-export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coefficients, number, status, warnings, documentOptions, companyDepositRate, priceNotices, showMargin, serverAlerts, belowCostIds }: Props) {
+export function QuoteEditor({
+  quoteId,
+  rows,
+  laborDays,
+  discount,
+  settings,
+  coefficients,
+  number,
+  status,
+  warnings,
+  documentOptions,
+  companyDepositRate,
+  priceNotices,
+  showMargin,
+  serverAlerts,
+  belowCostIds,
+  shippingCostCents = 0,
+  supplierView,
+  purchaseOrders,
+  hasSiteAddress = false,
+}: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
-  const input = { lines: rows, laborDays, discount, settings };
-  const result = useMemo(() => computeQuote(input), [rows, laborDays, discount, settings]); // eslint-disable-line react-hooks/exhaustive-deps
-  const max = useMemo(() => (showMargin ? maxDiscount(input) : null), [rows, laborDays, settings, showMargin]); // eslint-disable-line react-hooks/exhaustive-deps
+  const input = {
+    lines: rows,
+    laborDays,
+    discount,
+    settings,
+    shippingCostCents: showMargin ? shippingCostCents : 0,
+  };
+  const result = useMemo(() => computeQuote(input), [rows, laborDays, discount, settings, shippingCostCents]); // eslint-disable-line react-hooks/exhaustive-deps
+  const max = useMemo(() => (showMargin ? maxDiscount(input) : null), [rows, laborDays, settings, showMargin, shippingCostCents]); // eslint-disable-line react-hooks/exhaustive-deps
   const alerts = serverAlerts ?? result.alerts;
   const belowCost = new Set(belowCostIds ?? result.lines.filter((l) => l.belowCost).map((l) => l.id));
   const assujetti = settings.vatRegime === "assujetti";
@@ -87,6 +123,7 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
         </Notice>
       ))}
       {showMargin && max && <MarginPanel result={result} laborDays={laborDays} maxDiscount={max} />}
+      {showMargin && supplierView && <SupplierPanel quoteId={quoteId} view={supplierView} pending={pending} run={run} />}
       {flash && <Notice tone={flash.ok ? "ok" : "danger"}>{flash.text}</Notice>}
 
       <Card title="Lignes du devis">
@@ -105,6 +142,7 @@ export function QuoteEditor({ quoteId, rows, laborDays, discount, settings, coef
 
       <DocumentPanel quoteId={quoteId} options={documentOptions} companyDepositRate={companyDepositRate} />
       <SharePanel quoteId={quoteId} number={number} status={status} warnings={warnings} />
+      {showMargin && status === "accepte" && purchaseOrders && <OrdersPanel quoteId={quoteId} orders={purchaseOrders} hasSiteAddress={hasSiteAddress} />}
 
       <LinkButton href={`/app/devis/${quoteId}?etape=4`} variant="secondary" full>
         Relancer l&apos;assistant (solutions, métré…)

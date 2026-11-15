@@ -17,6 +17,7 @@ Stack : Next.js + TypeScript + Tailwind · Supabase (auth, base, stockage) · St
 | 6 | PDF du devis : modes particulier / détaillé, mentions légales, acompte, rétractation, partage | ✅ |
 | 7 | Tableau de bord : CA HT signé, marge, transformation, relances, duplication | ✅ |
 | 8 | Abonnement Stripe (3 formules + offre de lancement), équipe et rôles, lecture seule | ✅ |
+| B | Multi-fournisseurs : tarifs par fournisseur (Excel/CSV/PDF par l'IA), remises marque › famille › référence, rapprochement des références, choix du moins cher port compris, comparatif, bons de commande, alerte tarif ancien | ✅ |
 
 ## Organisation
 
@@ -64,7 +65,7 @@ Vérification de la RLS et de l'import sur un PostgreSQL local :
 
 ```bash
 createdb climdevis_test
-for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql supabase/tests/50_margin_isolation_check.sql; do
+for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase/tests/10_rls_check.sql supabase/tests/20_catalog_import_check.sql supabase/tests/30_quote_editing_check.sql supabase/tests/40_team_billing_check.sql supabase/tests/50_margin_isolation_check.sql supabase/tests/60_multi_suppliers_check.sql; do
   psql -d climdevis_test -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -106,6 +107,17 @@ for f in supabase/tests/00_supabase_stubs.sql supabase/migrations/*.sql supabase
   à chaque mise en service, par défaut — réglementation — ou seulement si complément), réseau aéraulique et zonage pour le gainable.
 - Les lignes du devis sont recalculées côté serveur à partir du catalogue en base.
 - Multi-split : Σ puissances intérieures ≤ 130 % de l'unité extérieure (modifiable par modèle).
+
+## Multi-fournisseurs (bloc B)
+
+- **Prix client** : prix public de référence unique (fournisseur de référence de la marque, sinon le plus élevé) × coefficient. Changer de fournisseur ne change que la marge.
+- **Prix d'achat** : prix net du tarif, sinon prix public du fournisseur × (1 − remise) ; remise la plus précise : référence › famille de remise (ou gamme) › marque.
+- **Choix par défaut** : la combinaison la moins chère au total, frais de port compris (« X € sous un franco de Y € HT », paliers facultatifs). Comparatif « ligne par ligne » / « tout chez X ». Fournisseur imposable par ligne ou pour tout le devis.
+- **Frais de port** : coût interne déduit de la marge (« Frais de port » dans « Ma marge »), ou refacturés (ligne « Livraison du matériel »).
+- **Rapprochement** : EAN ou référence normalisée identique = certain ; suffixe différent = probable, à confirmer (Fournisseurs › Correspondances).
+- **Import PDF** : lecture par Claude (`src/lib/suppliers/pdf-tariff*.ts`), lots de 5 pages, écran de validation, quota de pages par formule, mémoire des PDF déjà lus (empreinte SHA-256). Clé `ANTHROPIC_API_KEY` dans Vercel.
+- **Bons de commande** : un PDF par fournisseur (devis accepté), réf. fournisseur + fabricant, quantité, prix net attendu, référence chantier (client + ville, aucun prix client), date de livraison souhaitée.
+- **Cloisonnement** : fournisseurs, tarifs, remises, bons de commande et frais de port illisibles en base pour un technicien sans l'option « voir les marges » (`supabase/tests/60_multi_suppliers_check.sql`).
 
 ## Devis imprimé (PDF)
 

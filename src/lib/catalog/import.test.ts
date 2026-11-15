@@ -138,13 +138,52 @@ describe("normalisation des lignes", () => {
   });
 });
 
-describe("plan d'import (réimport d'un tarif)", () => {
+describe("plan d'import (multi-fournisseurs)", () => {
+  const offer = (public_price_cents: number, discount_rate: number | null = null) => ({
+    public_price_cents,
+    net_price_cents: null,
+    discount_rate,
+    match_status: "certain" as const,
+  });
   const existing: ExistingItem[] = [
-    { id: "p1", brand: "Atlas", reference: "UE-35", label: "Atlas UE-35", public_price_cents: 100000, discount_rate: 0.4 }, // remise saisie à la main
-    { id: "p2", brand: "Atlas", reference: "MU-35", label: "Atlas MU-35", public_price_cents: 50000, discount_rate: null },
-    { id: "p3", brand: "Atlas", reference: "MU-25", label: "Atlas MU-25", public_price_cents: 40000, discount_rate: null },
+    {
+      id: "p1",
+      brand: "Atlas",
+      reference: "UE-35",
+      label: "Atlas UE-35",
+      offer: offer(100000, 0.4),
+    }, // remise saisie à la main
+    {
+      id: "p2",
+      brand: "Atlas",
+      reference: "MU-35",
+      label: "Atlas MU-35",
+      offer: offer(50000),
+    },
+    {
+      id: "p3",
+      brand: "Atlas",
+      reference: "MU-25",
+      label: "Atlas MU-25",
+      offer: offer(40000),
+    },
+    {
+      id: "p4",
+      brand: "Atlas",
+      reference: "MSZ-AP25VG",
+      label: "Atlas MSZ-AP25VG",
+      offer: null,
+    }, // au catalogue, pas chez ce fournisseur
+    {
+      id: "p5",
+      brand: "Atlas",
+      reference: "CO-50",
+      label: "Atlas CO-50",
+      ean: "3700000000017",
+      offer: null,
+    },
   ];
-  const row = (line: number, reference: string, price: number, discount: number | null = null, brand = "Atlas") => ({
+  const row = (line: number, reference: string, price: number, discount: number | null = null, brand = "Atlas", extra: Record<string, unknown> = {}) => ({
     line,
     link_diameters: null,
     precharged_length_m: null,
@@ -158,6 +197,11 @@ describe("plan d'import (réimport d'un tarif)", () => {
     max_outlets: null,
     public_price_cents: price,
     discount_rate: discount,
+    supplier_ref: null,
+    ean: null,
+    discount_family: null,
+    net_price_cents: null,
+    ...extra,
   });
 
   const plan = buildPlan(
@@ -170,29 +214,64 @@ describe("plan d'import (réimport d'un tarif)", () => {
       row(6, "GA-50", 140000), // doublon dans le fichier
       row(7, "X-1", 9900, null, "ATLAS"), // nouvelle référence, marque écrite autrement
       row(8, "Z-1", 9900, null, "Borée"), // nouvelle marque
+      row(10, "MSZ-AP25VGK", 70000), // suffixe en plus : probable
+      row(11, "AUTRE-REF", 80000, null, "Atlas", {
+        ean: "3700000000017",
+        supplier_ref: "S-11",
+      }), // même EAN : certain
     ],
     existing,
     ["Atlas"],
     [{ line: 9, message: "prix illisible" }],
   );
 
-  it("met à jour au lieu de dupliquer (référence insensible à la casse)", () => {
-    expect(plan.updates.map((u) => u.id)).toEqual(["p1", "p2"]);
+  it("offres pour les articles existants, créations pour les nouveaux (référence insensible à la casse)", () => {
+    expect(plan.offers.map((o) => o.item_id)).toEqual(["p1", "p2", "p3", "p4", "p5"]);
     expect(plan.creates.map((c) => c.reference)).toEqual(["GA-50", "X-1", "Z-1"]);
+    expect((plan.creates[0]!.offer as { public_price_cents: number }).public_price_cents).toBe(139000);
   });
   it("ne touche pas à la remise saisie à la main si le fichier n'en contient pas", () => {
-    const u1 = plan.updates.find((u) => u.id === "p1")!;
-    expect("discount_rate" in u1).toBe(false);
-    expect(plan.updates.find((u) => u.id === "p2")!.discount_rate).toBe(0.3);
+    expect("discount_rate" in plan.offers.find((o) => o.item_id === "p1")!).toBe(false);
+    expect(plan.offers.find((o) => o.item_id === "p2")!.discount_rate).toBe(0.3);
   });
-  it("résumé : prix modifiés, nouveaux produits, hausses de plus de 5 %", () => {
-    expect(plan.summary).toEqual({ newItems: 3, priceChanges: 2, bigIncreases: 1, decreases: 0, discountChanges: 1, unchanged: 1, errors: 2 });
-    expect(plan.priceChanges[0]).toMatchObject({ id: "p1", oldPriceCents: 100000, newPriceCents: 108000 });
+  it("EAN identique = correspondance certaine ; suffixe différent = probable, à confirmer", () => {
+    expect(plan.offers.find((o) => o.item_id === "p5")).toMatchObject({
+      match_status: "certain",
+      supplier_ref: "S-11",
+      manufacturer_ref: "AUTRE-REF",
+    });
+    expect(plan.offers.find((o) => o.item_id === "p4")!.match_status).toBe("probable");
+    expect(plan.probable).toEqual([
+      {
+        line: 10,
+        label: "Atlas MSZ-AP25VGK",
+        candidateId: "p4",
+        candidateLabel: "Atlas MSZ-AP25VG",
+      },
+    ]);
+  });
+  it("résumé : prix modifiés, nouveaux articles, nouveaux chez ce fournisseur, probables", () => {
+    expect(plan.summary).toEqual({
+      newItems: 3,
+      newOffers: 1,
+      probable: 1,
+      priceChanges: 2,
+      bigIncreases: 1,
+      decreases: 0,
+      discountChanges: 1,
+      unchanged: 1,
+      errors: 2,
+    });
+    expect(plan.priceChanges[0]).toMatchObject({
+      id: "p1",
+      oldPriceCents: 100000,
+      newPriceCents: 108000,
+    });
     expect(plan.priceChanges[0]!.change).toBeCloseTo(0.08);
   });
   it("réutilise l'orthographe de la marque existante et crée les nouvelles", () => {
     expect(plan.creates.find((c) => c.reference === "X-1")!.brand).toBe("Atlas");
-    expect(plan.brandsToCreate).toEqual([{ name: "Borée", discount_rate: null }]);
+    expect(plan.brandsToCreate).toEqual([{ name: "Borée" }]);
   });
   it("signale les doublons du fichier et garde les erreurs de lecture", () => {
     expect(plan.errors.map((e) => e.line)).toEqual([6, 9]);
@@ -201,6 +280,92 @@ describe("plan d'import (réimport d'un tarif)", () => {
     const p = buildPlan("materiel", [row(2, "MU-25", 42000)], existing, ["Atlas"]);
     expect(p.summary.bigIncreases).toBe(0);
     expect(p.summary.priceChanges).toBe(1);
+  });
+  it("deux lignes du fichier ne peuvent pas viser le même article", () => {
+    const p = buildPlan("materiel", [row(2, "UE-35", 1000), row(3, "UE35", 1000)], existing, ["Atlas"]);
+    expect(p.offers).toHaveLength(1);
+    expect(p.errors.map((e) => e.line)).toEqual([3]);
+  });
+});
+
+describe("colonnes fournisseur", () => {
+  it("lit code fournisseur, EAN, famille de remise (gamme à défaut) et prix net", () => {
+    const { rows, errors } = normalizeMaterialRows(
+      [
+        {
+          line: 2,
+          cells: {
+            reference: "UE",
+            brand: "A",
+            type: "ue_mono",
+            public_price: "1000",
+            supplier_ref: "F-1",
+            ean: "3 700000 000017",
+            discount_family: "UE MONO",
+            net_price: "520,50",
+          },
+        },
+        {
+          line: 3,
+          cells: {
+            reference: "U2",
+            brand: "A",
+            type: "ue_mono",
+            public_price: "1000",
+            range_name: "Confort",
+          },
+        },
+        {
+          line: 4,
+          cells: {
+            reference: "U3",
+            brand: "A",
+            type: "ue_mono",
+            public_price: "1000",
+            net_price: "sur demande",
+          },
+        },
+      ],
+      {},
+    );
+    expect(errors.map((e) => e.line)).toEqual([4]);
+    expect(rows[0]).toMatchObject({
+      supplier_ref: "F-1",
+      ean: "3700000000017",
+      discount_family: "UE MONO",
+      net_price_cents: 52050,
+    });
+    expect(rows[1]!.discount_family).toBe("Confort");
+  });
+  it("accessoires : prix public OU prix net", () => {
+    const { rows, errors } = normalizeAccessoryRows(
+      [
+        {
+          line: 2,
+          cells: { reference: "C", name: "Carottage", net_price: "18" },
+        },
+        { line: 3, cells: { reference: "D", name: "Sans prix" } },
+      ],
+      {},
+    );
+    expect(rows[0]).toMatchObject({
+      public_price_cents: null,
+      net_price_cents: 1800,
+    });
+    expect(errors.map((e) => e.line)).toEqual([3]);
+    expect(validateMapping({ reference: "R", name: "N" }, "accessoires", {})).toContain("Choisissez la colonne « Prix public HT » ou « Prix net HT »");
+    expect(validateMapping({ reference: "R", name: "N", net_price: "Net" }, "accessoires", {})).toEqual([]);
+  });
+  it("reconnaît les intitulés fournisseur", () => {
+    const m = guessMapping(["Réf. fabricant", "Code fournisseur", "Gencod", "Famille de remise", "Prix public HT", "Prix net HT", "Désignation"], "accessoires");
+    expect(m).toMatchObject({
+      supplier_ref: "Code fournisseur",
+      ean: "Gencod",
+      discount_family: "Famille de remise",
+      public_price: "Prix public HT",
+      net_price: "Prix net HT",
+      name: "Désignation",
+    });
   });
 });
 
@@ -214,8 +379,16 @@ describe("champs techniques à l'import", () => {
       {},
     );
     expect(errors.map((e) => e.line)).toEqual([3]);
-    expect(rows[0]).toMatchObject({ link_diameters: '1/4" - 3/8"', precharged_length_m: 15, extra_charge_g_per_m: 20 });
-    const plan = buildPlan("materiel", rows, [{ id: "p", brand: "A", reference: "UE", label: "A UE", public_price_cents: 90000, discount_rate: null }], ["A"]);
-    expect(plan.updates[0]).toMatchObject({ link_diameters: '1/4" - 3/8"', precharged_length_m: 15, extra_charge_g_per_m: 20 });
+    expect(rows[0]).toMatchObject({
+      link_diameters: '1/4" - 3/8"',
+      precharged_length_m: 15,
+      extra_charge_g_per_m: 20,
+    });
+    const plan = buildPlan("materiel", rows, [{ id: "p", brand: "A", reference: "UE", label: "A UE", offer: null }], ["A"]);
+    expect(plan.updates[0]).toMatchObject({
+      link_diameters: '1/4" - 3/8"',
+      precharged_length_m: 15,
+      extra_charge_g_per_m: 20,
+    });
   });
 });

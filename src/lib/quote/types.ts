@@ -77,6 +77,8 @@ export interface CatProduct {
   brandDiscount: number;
   productDiscount: number | null;
   brandCoefficient: number;
+  /** Prix net du fournisseur le moins cher (multi-fournisseurs) ; le choix final est fait sur le devis. */
+  netPurchaseCents?: number | null;
   /** Données nettoyées pour un technicien sans accès aux marges : aucun coût. */
   costHidden?: boolean;
 }
@@ -91,6 +93,10 @@ export interface CatAccessory {
   publicPriceCents: number | null;
   purchasePriceCents: number | null;
   discount: number;
+  /** Prix net du fournisseur le moins cher (multi-fournisseurs). */
+  netPurchaseCents?: number | null;
+  /** Prix net le plus élevé chez les fournisseurs : plancher du prix de vente. */
+  floorPurchaseCents?: number | null;
   /** Prix de vente déjà calculé côté serveur (technicien sans accès aux marges) : aucun coût transmis. */
   fixedSaleCents?: number;
 }

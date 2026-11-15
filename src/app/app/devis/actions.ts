@@ -19,6 +19,10 @@ import { buildLines, enabledLines, proposeDays } from "@/lib/quote/lines";
 import { companyPricing, loadCoefficients, loadQuote, loadQuoteLines, loadWizardCatalog, siteInfo } from "@/lib/quote/load";
 import { parseRooms, toRoomNeeds, type RoomForm } from "@/lib/quote/rooms";
 import { EMPTY_EDITS, EMPTY_METRE, type WizardState } from "@/lib/quote/types";
+import { applySupplierPlan, DELIVERY_KEY, internalShipping, loadQuoteSupplierSettings } from "@/lib/suppliers/quote";
+import { loadOffers, loadSuppliers } from "@/lib/suppliers/load";
+import { buildPurchaseOrders, validateDesiredDate } from "@/lib/suppliers/orders";
+import { shippingCost } from "@/lib/suppliers/pricing";
 
 /** Lecteur des données de coûts (voir src/lib/security/costs.ts), toujours filtré sur l'entreprise. */
 async function costDb() {
@@ -167,6 +171,8 @@ export async function finalizeQuote(quoteId: string, mode: "keep" | "recalc" = "
 
   const existing = await linesOf(quoteId);
   const manual = mode === "keep" ? existing.filter((l) => l.origin === "manual") : [];
+  // Fournisseurs imposés à la main sur les lignes générées : conservés
+  const forcedByKey = new Map(mode === "keep" ? existing.filter((l) => l.supplierForced && l.wizardKey).map((l) => [l.wizardKey!, l.supplierId]) : []);
   const { db } = await costDb();
   const del = await db.from("quote_lines").delete().eq("company_id", company.id).eq("quote_id", quoteId).in("origin", mode === "keep" ? ["wizard"] : ["wizard", "manual"]);
   if (del.error) return { ok: false, message: FAIL };
@@ -186,6 +192,8 @@ export async function finalizeQuote(quoteId: string, mode: "keep" | "recalc" = "
     unit_purchase_cents: l.unitPurchaseCents,
     unit_sale_cents: l.unitSaleCents,
     vat_rate: ctx.pricing.vatRegime === "franchise" ? 0 : l.vatRate,
+    supplier_id: forcedByKey.get(l.key) ?? null,
+    supplier_forced: forcedByKey.has(l.key),
   }));
   if (rows.length) {
     const ins = await db.from("quote_lines").insert(rows);
@@ -221,17 +229,27 @@ async function recomputeTotals(quoteId: string): Promise<{ ok: boolean; message?
   const { supabase, company } = await getCurrentCompany();
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
-  const lines = await linesOf(quoteId);
-  const r = computeQuote({ lines, laborDays: q.laborDays, discount: q.discount, settings: pricingSettings(company, q.vatRegime) });
+  const { db } = await costDb();
+  // Fournisseur retenu par ligne (prix net), frais de port, ligne de livraison refacturée
+  const plan = await applySupplierPlan(db, company.id, quoteId, q.vatRegime, company.default_vat_rate);
+  const r = computeQuote({
+    lines: plan.lines,
+    laborDays: q.laborDays,
+    discount: q.discount,
+    settings: pricingSettings(company, q.vatRegime),
+    shippingCostCents: internalShipping(plan.settings),
+  });
   const { error } = await supabase
     .from("quotes")
     .update({ total_ht_cents: r.totalHtCents, total_ttc_cents: r.totalTtcCents, discount_cents: r.discountCents })
     .eq("id", quoteId);
   // marge nette : table protégée (lisible seulement par les membres autorisés)
-  const { db } = await costDb();
-  const fin = await db
-    .from("quote_financials")
-    .upsert({ quote_id: quoteId, company_id: company.id, net_margin_cents: r.margin.netMarginCents, updated_at: new Date().toISOString() });
+  const fin = await db.from("quote_financials").upsert({
+    quote_id: quoteId,
+    company_id: company.id,
+    net_margin_cents: r.margin.netMarginCents,
+    updated_at: new Date().toISOString(),
+  });
   if (fin.error) return { ok: false, message: FAIL };
   revalidatePath(`/app/devis/${quoteId}/apercu`);
   revalidatePath("/app");
@@ -274,6 +292,8 @@ export async function deleteLine(quoteId: string, lineId: string): Promise<{ ok:
   if (!c) return { ok: false, message: "Ligne introuvable." };
   const { error } = await c.db.from("quote_lines").delete().eq("company_id", c.companyId).eq("id", lineId);
   if (error) return { ok: false, message: FAIL };
+  // Supprimer la ligne de livraison = ne plus refacturer le port
+  if (c.line.wizardKey === DELIVERY_KEY) await c.db.from("quote_financials").update({ shipping_rebill: false }).eq("company_id", c.companyId).eq("quote_id", quoteId);
   if (c.line.origin === "wizard" && c.line.wizardKey) {
     const edits = recordRemoval(c.q.wizard.edits, c.line.wizardKey);
     await c.supabase.from("quotes").update({ wizard: { ...c.q.wizard, edits } }).eq("id", quoteId);
@@ -326,7 +346,15 @@ export async function roundQuote(quoteId: string): Promise<{ ok: boolean; messag
   const q = await loadQuote(supabase, quoteId);
   if (!q) return { ok: false, message: "Devis introuvable." };
   const lines = await linesOf(quoteId);
-  const r = roundToPsychologicalPrice({ lines, laborDays: q.laborDays, discount: q.discount, settings: pricingSettings(company, q.vatRegime) });
+  const { db, companyId } = await costDb();
+  const shipping = internalShipping(await loadQuoteSupplierSettings(db, companyId, quoteId));
+  const r = roundToPsychologicalPrice({
+    lines,
+    laborDays: q.laborDays,
+    discount: q.discount,
+    settings: pricingSettings(company, q.vatRegime),
+    shippingCostCents: shipping,
+  });
   if (r.outcome === "unchanged") return { ok: true, message: r.reason };
 
   let wizard = q.wizard;
@@ -488,7 +516,8 @@ export async function duplicateQuote(sourceId: string, target: { mode: "same" | 
   if (e2) return { ok: false, message: FAIL };
 
   // Lignes libres recopiées telles quelles
-  const manual = srcLines.filter((l) => l.origin === "manual");
+  // (la ligne « Livraison du matériel » dépend des fournisseurs du devis : non recopiée)
+  const manual = srcLines.filter((l) => l.origin === "manual" && l.wizardKey !== DELIVERY_KEY);
   if (manual.length) {
     const { error } = await (await costDb()).db.from("quote_lines").insert(
       manual.map((l, i) => ({
@@ -556,4 +585,226 @@ export async function deleteDraftQuote(quoteId: string): Promise<{ ok: boolean; 
   }
   revalidatePath("/app");
   return { ok: true, message: "Devis supprimé." };
+}
+
+// ---------------------------------------------------------------------------
+// Fournisseurs du devis (membres autorisés à voir les marges)
+// ---------------------------------------------------------------------------
+
+async function supplierGuard(quoteId: string) {
+  const g = await readOnlyError();
+  if (g) return { error: g };
+  const a = await costAccess();
+  if (a.restricted)
+    return {
+      error: {
+        ok: false as const,
+        message: "Réservé aux membres autorisés à voir les prix d'achat.",
+      },
+    };
+  const q = await loadQuote(a.supabase, quoteId);
+  if (!q) return { error: { ok: false as const, message: "Devis introuvable." } };
+  return { a, q };
+}
+
+async function supplierExists(db: Awaited<ReturnType<typeof costAccess>>["db"], companyId: string, supplierId: string) {
+  if (!UUID.test(supplierId)) return false;
+  const { data } = await db.from("suppliers").select("id").eq("company_id", companyId).eq("id", supplierId).maybeSingle();
+  return Boolean(data);
+}
+
+/** Fournisseur imposé pour une ligne (null = choix automatique). */
+export async function setLineSupplier(quoteId: string, lineId: string, supplierId: string | null): Promise<{ ok: boolean; message?: string }> {
+  const g = await supplierGuard(quoteId);
+  if ("error" in g) return g.error!;
+  const { db, companyId } = g.a;
+  if (!UUID.test(lineId)) return { ok: false, message: "Ligne introuvable." };
+  if (supplierId && !(await supplierExists(db, companyId, supplierId))) return { ok: false, message: "Fournisseur introuvable." };
+  const { error } = await db
+    .from("quote_lines")
+    .update({ supplier_id: supplierId, supplier_forced: supplierId !== null })
+    .eq("company_id", companyId)
+    .eq("quote_id", quoteId)
+    .eq("id", lineId);
+  if (error) return { ok: false, message: FAIL };
+  return recomputeTotals(quoteId);
+}
+
+/** « Tout chez X » (null = combinaison la moins chère, port compris). */
+export async function setQuoteSupplier(quoteId: string, supplierId: string | null): Promise<{ ok: boolean; message?: string }> {
+  const g = await supplierGuard(quoteId);
+  if ("error" in g) return g.error!;
+  const { db, companyId } = g.a;
+  if (supplierId && !(await supplierExists(db, companyId, supplierId))) return { ok: false, message: "Fournisseur introuvable." };
+  const { error } = await db.from("quote_financials").upsert({
+    quote_id: quoteId,
+    company_id: companyId,
+    forced_supplier_id: supplierId,
+  });
+  if (error) return { ok: false, message: FAIL };
+  // « Tout chez X » remplace les choix ligne par ligne
+  if (supplierId) await db.from("quote_lines").update({ supplier_forced: false }).eq("company_id", companyId).eq("quote_id", quoteId);
+  return recomputeTotals(quoteId);
+}
+
+/** Refacturer les frais de port au client (ligne « Livraison du matériel »). */
+export async function setShippingRebill(quoteId: string, rebill: boolean): Promise<{ ok: boolean; message?: string }> {
+  const g = await supplierGuard(quoteId);
+  if ("error" in g) return g.error!;
+  const { db, companyId } = g.a;
+  const { error } = await db.from("quote_financials").upsert({
+    quote_id: quoteId,
+    company_id: companyId,
+    shipping_rebill: rebill,
+  });
+  if (error) return { ok: false, message: FAIL };
+  return recomputeTotals(quoteId);
+}
+
+/** Recalcule le choix des fournisseurs (après un nouveau tarif, par exemple). */
+export async function refreshQuoteSuppliers(quoteId: string): Promise<{ ok: boolean; message?: string }> {
+  const g = await supplierGuard(quoteId);
+  if ("error" in g) return g.error!;
+  return recomputeTotals(quoteId);
+}
+
+// ---------------------------------------------------------------------------
+// Bons de commande fournisseur (devis accepté)
+// ---------------------------------------------------------------------------
+
+export interface PurchaseOrderSummary {
+  supplierId: string;
+  supplierName: string;
+  number: string;
+  totalCents: number;
+  generatedAt: string;
+}
+
+/** Un bon par fournisseur retenu, avec les prix nets prévus au devis. */
+export async function generatePurchaseOrders(quoteId: string, delivery: "depot" | "chantier", desiredDate: string | null): Promise<{ ok: boolean; message: string; orders?: PurchaseOrderSummary[] }> {
+  const g = await supplierGuard(quoteId);
+  if ("error" in g) return { ok: false, message: g.error!.message };
+  const { a, q } = g;
+  if (q.status !== "accepte")
+    return {
+      ok: false,
+      message: "Les bons de commande se génèrent une fois le devis accepté.",
+    };
+  const now = new Date();
+  const dateError = validateDesiredDate(desiredDate || null, now);
+  if (dateError) return { ok: false, message: dateError };
+  const { db, companyId, company } = a;
+
+  const lines = (await loadQuoteLines(db, companyId, quoteId)).filter((l) => l.supplierId && l.wizardKey !== DELIVERY_KEY);
+  if (lines.length === 0)
+    return {
+      ok: false,
+      message: "Aucune ligne de ce devis n'a de fournisseur (tarifs fournisseurs absents).",
+    };
+  const supplierIds = [...new Set(lines.map((l) => l.supplierId!))];
+  const [suppliers, offers] = await Promise.all([
+    loadSuppliers(db, companyId),
+    loadOffers(db, companyId, {
+      productIds: lines.flatMap((l) => (l.productId ? [l.productId] : [])),
+      accessoryIds: lines.flatMap((l) => (l.accessoryId ? [l.accessoryId] : [])),
+    }),
+  ]);
+  const offerOf = (l: (typeof lines)[number]) => offers.find((o) => o.supplierId === l.supplierId && (l.productId ? o.productId === l.productId : o.accessoryId === l.accessoryId));
+  const { data: products } = await db
+    .from("products")
+    .select("id, reference")
+    .eq("company_id", companyId)
+    .in(
+      "id",
+      lines.flatMap((l) => (l.productId ? [l.productId] : [])),
+    );
+  const refOfProduct = new Map((products ?? []).map((p) => [p.id, p.reference as string]));
+
+  // Port par fournisseur selon ses conditions, sur le montant commandé
+  const shippingBySupplier: Record<string, number> = {};
+  for (const sid of supplierIds) {
+    const rule = suppliers.find((s) => s.id === sid)?.shipping;
+    const subtotal = lines.filter((l) => l.supplierId === sid).reduce((n, l) => n + Math.round(l.quantity * l.unitPurchaseCents), 0);
+    shippingBySupplier[sid] = rule ? shippingCost(rule, subtotal) : 0;
+  }
+  const orders = buildPurchaseOrders(
+    lines.map((l) => {
+      const o = offerOf(l);
+      return {
+        supplierId: l.supplierId,
+        supplierRef: o?.supplierRef ?? null,
+        manufacturerRef: o?.manufacturerRef ?? (l.productId ? (refOfProduct.get(l.productId) ?? null) : null),
+        designation: o?.designation && l.accessoryId ? o.designation : l.designation,
+        quantity: l.quantity,
+        unit: l.unit,
+        unitNetCents: l.unitPurchaseCents,
+      };
+    }),
+    suppliers
+      .filter((s) => supplierIds.includes(s.id))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        agency: s.agency,
+        contactName: s.contactName,
+        email: s.email,
+        phone: s.phone,
+      })),
+    {
+      quoteNumber: q.number,
+      clientName: q.project.client.name,
+      siteCity: q.project.site_city,
+      delivery,
+      depotAddress: {
+        line: company.base_address,
+        postalCode: company.base_postal_code,
+        city: company.base_city,
+      },
+      siteAddress: {
+        line: q.project.site_address,
+        postalCode: q.project.site_postal_code,
+        city: q.project.site_city,
+      },
+      desiredDate: desiredDate || null,
+      generatedAt: now,
+      shippingBySupplier,
+    },
+  );
+  for (const o of orders) {
+    const { error } = await db.from("purchase_orders").upsert(
+      {
+        company_id: companyId,
+        quote_id: quoteId,
+        supplier_id: o.supplier.id,
+        number: o.number,
+        delivery,
+        desired_date: desiredDate || null,
+        content: { ...o, generatedAt: o.generatedAt.toISOString() },
+        total_cents: o.totalCents,
+        generated_at: o.generatedAt.toISOString(),
+        generated_by: a.user.id,
+      },
+      { onConflict: "quote_id,supplier_id" },
+    );
+    if (error) return { ok: false, message: FAIL };
+  }
+  // Fournisseurs qui ne sont plus retenus : anciens bons retirés
+  await db
+    .from("purchase_orders")
+    .delete()
+    .eq("company_id", companyId)
+    .eq("quote_id", quoteId)
+    .not("supplier_id", "in", `(${supplierIds.join(",")})`);
+  revalidatePath(`/app/devis/${quoteId}/apercu`);
+  return {
+    ok: true,
+    message: `${orders.length} bon${orders.length > 1 ? "s" : ""} de commande prêt${orders.length > 1 ? "s" : ""} ✔`,
+    orders: orders.map((o) => ({
+      supplierId: o.supplier.id,
+      supplierName: o.supplier.name,
+      number: o.number,
+      totalCents: o.totalCents,
+      generatedAt: o.generatedAt.toISOString(),
+    })),
+  };
 }

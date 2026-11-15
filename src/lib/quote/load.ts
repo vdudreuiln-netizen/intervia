@@ -7,26 +7,42 @@ import type { QuoteDiscount, QuoteLineInput } from "@/lib/pricing/engine";
 import type { CompanyPricing, SiteInfo } from "./context";
 import type { RoomValues } from "./rooms";
 import type { AutoRole, CatAccessory, CatProduct, WizardState } from "./types";
+import { itemNetPrices, loadSupplierBook } from "@/lib/suppliers/load";
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
 /** Catalogue AVEC coûts : `db` = client normal (membre autorisé) ou client service (serveur seulement), filtré par entreprise. */
 export async function loadWizardCatalog(supabase: SupabaseClient, companyId: string): Promise<{ products: CatProduct[]; accessories: CatAccessory[] }> {
-  type RawP = Record<string, unknown> & { brands: { name: string; discount_rate: number; sale_coefficient: number } };
-  const [products, accessories] = await Promise.all([
-    fetchAll<RawP>((from, to) =>
-      supabase
-        .from("products")
-        .select("id, brand_id, reference, range_name, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, link_diameters, precharged_length_m, extra_charge_g_per_m, public_price_cents, discount_rate, brands(name, discount_rate, sale_coefficient)")
-        .eq("company_id", companyId)
-        .eq("active", true)
-        .neq("type", "accessoire")
-        .range(from, to) as never,
+  type RawP = Record<string, unknown> & {
+    brands: { name: string; discount_rate: number; sale_coefficient: number };
+  };
+  const [products, accessories, sb] = await Promise.all([
+    fetchAll<RawP>(
+      (from, to) =>
+        supabase
+          .from("products")
+          .select(
+            "id, brand_id, reference, range_name, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, link_diameters, precharged_length_m, extra_charge_g_per_m, public_price_cents, discount_rate, brands(name, discount_rate, sale_coefficient)",
+          )
+          .eq("company_id", companyId)
+          .eq("active", true)
+          .neq("type", "accessoire")
+          .range(from, to) as never,
     ),
-    fetchAll<Record<string, unknown>>((from, to) =>
-      supabase.from("accessories").select("id, auto_role, category, name, diameter, unit, public_price_cents, purchase_price_cents, discount_rate").eq("company_id", companyId).eq("active", true).order("created_at").range(from, to) as never,
+    fetchAll<Record<string, unknown>>(
+      (from, to) =>
+        supabase
+          .from("accessories")
+          .select("id, auto_role, category, name, diameter, unit, public_price_cents, purchase_price_cents, floor_purchase_cents, discount_rate")
+          .eq("company_id", companyId)
+          .eq("active", true)
+          .order("created_at")
+          .range(from, to) as never,
     ),
+    loadSupplierBook(supabase, companyId),
   ]);
+  // Prix d'achat = fournisseur le moins cher ; le choix définitif (port compris) est fait sur le devis.
+  const cheapest = (item: { productId?: string; accessoryId?: string }) => itemNetPrices(sb, item)[0]?.netCents ?? null;
   return {
     products: products.map((p) => ({
       id: p.id as string,
@@ -46,6 +62,7 @@ export async function loadWizardCatalog(supabase: SupabaseClient, companyId: str
       brandDiscount: Number(p.brands.discount_rate),
       productDiscount: num(p.discount_rate),
       brandCoefficient: Number(p.brands.sale_coefficient),
+      netPurchaseCents: cheapest({ productId: p.id as string }),
     })),
     accessories: accessories.map((a) => ({
       id: a.id as string,
@@ -57,6 +74,8 @@ export async function loadWizardCatalog(supabase: SupabaseClient, companyId: str
       publicPriceCents: num(a.public_price_cents),
       purchasePriceCents: num(a.purchase_price_cents),
       discount: Number(a.discount_rate),
+      netPurchaseCents: cheapest({ accessoryId: a.id as string }),
+      floorPurchaseCents: num(a.floor_purchase_cents),
     })),
   };
 }
@@ -199,6 +218,8 @@ export interface QuoteLineRow extends QuoteLineInput {
   productId: string | null;
   accessoryId: string | null;
   position: number;
+  supplierId: string | null;
+  supplierForced: boolean;
 }
 
 /** Lignes AVEC prix d'achat (voir loadWizardCatalog pour `supabase` / `companyId`). */
@@ -218,5 +239,7 @@ export async function loadQuoteLines(supabase: SupabaseClient, companyId: string
     productId: r.product_id,
     accessoryId: r.accessory_id,
     position: r.position,
+    supplierId: r.supplier_id ?? null,
+    supplierForced: Boolean(r.supplier_forced),
   }));
 }

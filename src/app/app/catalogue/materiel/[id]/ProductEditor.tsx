@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, MoneyField, Notice, PercentField, Select } from "@/components/ui";
-import { formatEuros, formatPercent } from "@/lib/format";
+import { centsToInput, formatEuros, formatPercent, rateToInput } from "@/lib/format";
+import { SupplierOffers, type OfferView } from "../../SupplierOffers";
 import { catalogPrices } from "@/lib/pricing/engine";
 import { PRODUCT_TYPE_LABELS } from "@/lib/catalog/import";
 import { parseProductForm, type ProductForm, type ProductFormKey } from "@/lib/catalog/forms";
@@ -16,9 +17,28 @@ interface BrandOpt {
   sale_coefficient: number;
 }
 
-export function ProductEditor({ id, initial, brands }: { id: string | null; initial: ProductForm; brands: BrandOpt[] }) {
+interface SupplierPricing {
+  suppliers: { id: string; name: string }[];
+  offers: OfferView[];
+  /** Remise famille / marque du fournisseur qui s'applique sans remise propre. */
+  fallbackBySupplier: Record<string, number>;
+  defaultSupplierId: string | null;
+}
+
+export function ProductEditor({ id, initial, brands, pricing }: { id: string | null; initial: ProductForm; brands: BrandOpt[]; pricing: SupplierPricing }) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
+  const [supplierId, setSupplierId] = useState(pricing.defaultSupplierId ?? pricing.suppliers[0]?.id ?? "");
+  const fallback = pricing.fallbackBySupplier[supplierId] ?? 0;
+  const chooseSupplier = (sid: string) => {
+    setSupplierId(sid);
+    const o = pricing.offers.find((x) => x.supplierId === sid);
+    setForm((f) => ({
+      ...f,
+      public_price: o?.publicPriceCents != null ? centsToInput(o.publicPriceCents) : f.public_price,
+      discount: o ? rateToInput(o.discount) : "",
+    }));
+  };
   const [errors, setErrors] = useState<Partial<Record<ProductFormKey, string>>>({});
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
@@ -32,7 +52,13 @@ export function ProductEditor({ id, initial, brands }: { id: string | null; init
   const parsed = parseProductForm(form);
   const preview =
     brand && parsed.values.public_price_cents > 0 && !parsed.errors.discount
-      ? catalogPrices({ kind: "material", publicPriceCents: parsed.values.public_price_cents, brandDiscount: brand.discount_rate, productDiscount: parsed.values.discount_rate, brandCoefficient: brand.sale_coefficient })
+      ? catalogPrices({
+          kind: "material",
+          publicPriceCents: parsed.values.public_price_cents,
+          brandDiscount: fallback,
+          productDiscount: parsed.values.discount_rate,
+          brandCoefficient: brand.sale_coefficient,
+        })
       : null;
 
   return (
@@ -80,23 +106,32 @@ export function ProductEditor({ id, initial, brands }: { id: string | null; init
           )}
         </Card>
       )}
-      <Card title="Prix">
-        <MoneyField label="Prix public HT" value={form.public_price} onChange={set("public_price")} error={errors.public_price} />
-        <PercentField
-          label="Remise propre à ce produit"
-          value={form.discount}
-          onChange={set("discount")}
-          error={errors.discount}
-          hint={brand ? `Laissez vide pour appliquer la remise de la marque (${formatPercent(brand.discount_rate)})` : "Laissez vide pour appliquer la remise de la marque"}
-        />
+      <SupplierOffers offers={pricing.offers} />
+      <Card title="Tarif chez un fournisseur">
+        {pricing.suppliers.length === 0 ? (
+          <Notice tone="danger">Créez d&apos;abord un fournisseur (menu Fournisseurs).</Notice>
+        ) : (
+          <Select
+            label="Fournisseur"
+            value={supplierId}
+            onChange={chooseSupplier}
+            options={pricing.suppliers.map((x) => ({
+              value: x.id,
+              label: x.name,
+            }))}
+            hint="Le prix et la remise ci-dessous sont ceux de ce fournisseur."
+          />
+        )}
+        <MoneyField label="Prix public HT (tarif du fournisseur)" value={form.public_price} onChange={set("public_price")} error={errors.public_price} />
+        <PercentField label="Remise propre à ce produit" value={form.discount} onChange={set("discount")} error={errors.discount} hint={`Laissez vide pour appliquer la remise de famille ou de marque de ce fournisseur (${formatPercent(fallback)})`} />
         {preview && (
           <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-100 p-4 text-base">
             <div>
-              <span className="block text-slate-600">Prix d&apos;achat</span>
+              <span className="block text-slate-600">Prix d&apos;achat chez ce fournisseur</span>
               <strong className="text-xl">{formatEuros(preview.purchaseCents)}</strong>
             </div>
             <div>
-              <span className="block text-slate-600">Prix de vente (× {brand!.sale_coefficient.toLocaleString("fr-FR")})</span>
+              <span className="block text-slate-600">Prix de vente si ce prix public est la référence (× {brand!.sale_coefficient.toLocaleString("fr-FR")})</span>
               <strong className="text-xl">{formatEuros(preview.saleCents)}</strong>
             </div>
           </div>
@@ -110,7 +145,7 @@ export function ProductEditor({ id, initial, brands }: { id: string | null; init
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const r = await saveProduct(id, form);
+              const r = await saveProduct(id, form, supplierId || null);
               setErrors((r.errors as typeof errors) ?? {});
               setMsg({ ok: r.ok, text: r.message ?? "" });
               if (r.ok) {

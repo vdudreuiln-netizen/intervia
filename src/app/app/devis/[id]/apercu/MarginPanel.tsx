@@ -50,9 +50,17 @@ export function MarginPanel({ result, laborDays, maxDiscount }: { result: QuoteR
         {m.otherSaleCents > 0 && row("Autres prestations", m.otherSaleCents)}
         {row("Frais de déplacement", m.travelSaleCents)}
         {m.discountCents > 0 && row("Remise commerciale", m.discountCents, { negative: true })}
-        {row("Charges sur la main d'œuvre", m.laborChargesCents, { negative: true })}
-        {row("Charges sur le matériel", m.materialChargesCents, { negative: true })}
-        {m.purchaseCostCents > purchaseMaterial && row("Autres coûts", m.purchaseCostCents - purchaseMaterial, { negative: true })}
+        {row("Charges sur la main d'œuvre", m.laborChargesCents, {
+          negative: true,
+        })}
+        {row("Charges sur le matériel", m.materialChargesCents, {
+          negative: true,
+        })}
+        {m.shippingCostCents > 0 && row("Frais de port", m.shippingCostCents, { negative: true })}
+        {m.purchaseCostCents > purchaseMaterial &&
+          row("Autres coûts", m.purchaseCostCents - purchaseMaterial, {
+            negative: true,
+          })}
         {row("Marge nette", m.netMarginCents, { strong: true })}
       </dl>
       <p className="mt-3 rounded-xl bg-brand-light p-3 text-base text-brand-dark">

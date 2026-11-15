@@ -38,6 +38,7 @@ export interface AccessoryItem {
   unit: string;
   public_price_cents: number | null;
   purchase_price_cents: number | null;
+  floor_purchase_cents: number | null;
   discount_rate: number;
   is_example: boolean;
   prices: CatalogPrices;
@@ -113,19 +114,24 @@ export async function loadProducts(supabase: SupabaseClient, companyId: string):
 }
 
 export async function loadAccessories(supabase: SupabaseClient, companyId: string, companyCoefficient: number, purchaseCoefficient: number): Promise<AccessoryItem[]> {
-  const rows = await fetchAll<Record<string, unknown>>((from, to) =>
-    supabase
-      .from("accessories")
-      .select("id, reference, category, name, diameter, unit, public_price_cents, purchase_price_cents, discount_rate, is_example")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("category")
-      .order("name")
-      .range(from, to) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+  const rows = await fetchAll<Record<string, unknown>>(
+    (from, to) =>
+      supabase
+        .from("accessories")
+        .select("id, reference, category, name, diameter, unit, public_price_cents, purchase_price_cents, floor_purchase_cents, discount_rate, is_example")
+        .eq("company_id", companyId)
+        .eq("active", true)
+        .order("category")
+        .order("name")
+        .range(from, to) as unknown as PromiseLike<{
+        data: Record<string, unknown>[] | null;
+        error: { message: string } | null;
+      }>,
   );
   return rows.map((a) => {
     const public_price_cents = num(a.public_price_cents);
     const purchase_price_cents = num(a.purchase_price_cents);
+    const floor_purchase_cents = num(a.floor_purchase_cents);
     const discount_rate = Number(a.discount_rate);
     return {
       id: a.id as string,
@@ -136,17 +142,29 @@ export async function loadAccessories(supabase: SupabaseClient, companyId: strin
       unit: a.unit as string,
       public_price_cents,
       purchase_price_cents,
+      floor_purchase_cents,
       discount_rate,
       is_example: a.is_example as boolean,
-      prices: catalogPrices({ kind: "accessory", publicPriceCents: public_price_cents, purchasePriceCents: purchase_price_cents, discount: discount_rate, companyCoefficient, purchaseCoefficient }),
+      prices: catalogPrices({
+        kind: "accessory",
+        publicPriceCents: public_price_cents,
+        purchasePriceCents: purchase_price_cents,
+        discount: discount_rate,
+        companyCoefficient,
+        purchaseCoefficient,
+        floorPurchaseCents: floor_purchase_cents,
+      }),
     };
   });
 }
 
 export interface PriceHistoryItem {
   changed_at: string;
+  supplier: string | null;
   old_public_price_cents: number | null;
-  new_public_price_cents: number;
+  new_public_price_cents: number | null;
+  old_net_price_cents: number | null;
+  new_net_price_cents: number | null;
   old_discount_rate: number | null;
   new_discount_rate: number | null;
   from_import: boolean;
@@ -155,14 +173,17 @@ export interface PriceHistoryItem {
 export async function loadPriceHistory(supabase: SupabaseClient, column: "product_id" | "accessory_id", id: string): Promise<PriceHistoryItem[]> {
   const { data } = await supabase
     .from("price_history")
-    .select("changed_at, old_public_price_cents, new_public_price_cents, old_discount_rate, new_discount_rate, import_id")
+    .select("changed_at, old_public_price_cents, new_public_price_cents, old_net_price_cents, new_net_price_cents, old_discount_rate, new_discount_rate, import_id, suppliers(name)")
     .eq(column, id)
     .order("changed_at", { ascending: false })
-    .limit(20);
+    .limit(30);
   return (data ?? []).map((h) => ({
     changed_at: h.changed_at,
+    supplier: (h.suppliers as unknown as { name: string } | null)?.name ?? null,
     old_public_price_cents: num(h.old_public_price_cents),
-    new_public_price_cents: Number(h.new_public_price_cents),
+    new_public_price_cents: num(h.new_public_price_cents),
+    old_net_price_cents: num(h.old_net_price_cents),
+    new_net_price_cents: num(h.new_net_price_cents),
     old_discount_rate: num(h.old_discount_rate),
     new_discount_rate: num(h.new_discount_rate),
     from_import: h.import_id !== null,

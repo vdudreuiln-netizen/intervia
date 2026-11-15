@@ -3,15 +3,30 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, MoneyField, Notice, PercentField, Select } from "@/components/ui";
-import { formatEuros } from "@/lib/format";
+import { centsToInput, formatEuros, rateToInput } from "@/lib/format";
+import type { ItemPricing } from "@/lib/suppliers/views";
+import { SupplierOffers } from "../../SupplierOffers";
 import { catalogPrices } from "@/lib/pricing/engine";
 import { ACCESSORY_CATEGORIES, ACCESSORY_UNITS, parseAccessoryForm, type AccessoryForm, type AccessoryFormKey } from "@/lib/catalog/forms";
 import { AUTO_ROLE_LABELS } from "@/lib/quote/types";
 import { deleteAccessory, saveAccessory } from "../../actions";
 
-export function AccessoryEditor({ id, initial, coefficient, purchaseCoefficient }: { id: string | null; initial: AccessoryForm; coefficient: number; purchaseCoefficient: number }) {
+export function AccessoryEditor({ id, initial, coefficient, purchaseCoefficient, pricing }: { id: string | null; initial: AccessoryForm; coefficient: number; purchaseCoefficient: number; pricing: ItemPricing }) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
+  const [supplierId, setSupplierId] = useState(pricing.defaultSupplierId ?? pricing.suppliers[0]?.id ?? "");
+  const fallback = pricing.fallbackBySupplier[supplierId] ?? 0;
+  const chooseSupplier = (sid: string) => {
+    setSupplierId(sid);
+    const o = pricing.offers.find((x) => x.supplierId === sid);
+    if (o)
+      setForm((f) => ({
+        ...f,
+        public_price: o.publicPriceCents !== null ? centsToInput(o.publicPriceCents) : "",
+        discount: rateToInput(o.discount),
+        purchase_price: o.publicPriceCents === null && o.netCents !== null ? centsToInput(o.netCents) : f.purchase_price,
+      }));
+  };
   const [errors, setErrors] = useState<Partial<Record<AccessoryFormKey, string>>>({});
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
@@ -23,7 +38,14 @@ export function AccessoryEditor({ id, initial, coefficient, purchaseCoefficient 
   const parsed = parseAccessoryForm(form);
   const preview =
     (parsed.values.public_price_cents ?? 0) > 0 || (parsed.values.purchase_price_cents ?? 0) > 0
-      ? catalogPrices({ kind: "accessory", publicPriceCents: parsed.values.public_price_cents, purchasePriceCents: parsed.values.purchase_price_cents, discount: parsed.values.discount_rate, companyCoefficient: coefficient, purchaseCoefficient })
+      ? catalogPrices({
+          kind: "accessory",
+          publicPriceCents: parsed.values.public_price_cents,
+          purchasePriceCents: parsed.values.purchase_price_cents,
+          discount: form.discount.trim() === "" ? fallback : parsed.values.discount_rate,
+          companyCoefficient: coefficient,
+          purchaseCoefficient,
+        })
       : null;
   const per = form.unit === "m" ? " / m" : form.unit === "kg" ? " / kg" : "";
 
@@ -47,10 +69,25 @@ export function AccessoryEditor({ id, initial, coefficient, purchaseCoefficient 
         />
         <Field label="Référence fournisseur" value={form.reference} onChange={set("reference")} hint="Permet de mettre à jour le prix lors d'un import de tarif" />
       </Card>
-      <Card title="Prix">
+      <SupplierOffers offers={pricing.offers} />
+      <Card title="Tarif chez un fournisseur">
+        {pricing.suppliers.length === 0 ? (
+          <Notice tone="danger">Créez d&apos;abord un fournisseur (menu Fournisseurs).</Notice>
+        ) : (
+          <Select
+            label="Fournisseur"
+            value={supplierId}
+            onChange={chooseSupplier}
+            options={pricing.suppliers.map((x) => ({
+              value: x.id,
+              label: x.name,
+            }))}
+            hint="Le prix et la remise ci-dessous sont ceux de ce fournisseur. Le prix de vente reste le même quel que soit le fournisseur."
+          />
+        )}
         <MoneyField label={`Prix public HT${per}`} value={form.public_price} onChange={set("public_price")} error={errors.public_price} />
         {form.public_price.trim() !== "" ? (
-          <PercentField label="Remise fournisseur" value={form.discount} onChange={set("discount")} error={errors.discount} />
+          <PercentField label="Remise propre à cet accessoire" value={form.discount} onChange={set("discount")} error={errors.discount} hint={`Vide = remise de famille de ce fournisseur (${(fallback * 100).toLocaleString("fr-FR")} %)`} />
         ) : (
           <MoneyField label={`Prix d'achat HT${per} (si pas de prix public)`} value={form.purchase_price} onChange={set("purchase_price")} hint={`Vendu prix d'achat × ${purchaseCoefficient.toLocaleString("fr-FR")}`} />
         )}
@@ -75,7 +112,7 @@ export function AccessoryEditor({ id, initial, coefficient, purchaseCoefficient 
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const r = await saveAccessory(id, form);
+              const r = await saveAccessory(id, form, supplierId || null);
               setErrors((r.errors as typeof errors) ?? {});
               setMsg({ ok: r.ok, text: r.message ?? "" });
               if (r.ok) {

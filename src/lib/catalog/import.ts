@@ -4,9 +4,15 @@
  * Étapes : tableau brut → ligne d'en-tête → correspondance des colonnes →
  * lignes normalisées → plan (créations / mises à jour / erreurs) → résumé.
  * Tout est pur et testé ; l'application en base se fait en une transaction
- * (fonction SQL apply_catalog_import).
+ * (fonction SQL apply_supplier_import).
+ *
+ * Multi-fournisseurs : chaque ligne du tarif devient le tarif (« offre ») du
+ * fournisseur importé pour un article. L'article est retrouvé par EAN ou par
+ * référence fabricant normalisée (correspondance certaine) ; une référence qui
+ * n'en diffère que par un suffixe est une correspondance PROBABLE, à confirmer.
  */
 import { parseDecimal } from "@/lib/format";
+import { buildMatchIndex, matchWithIndex, normalizeEan } from "@/lib/suppliers/matching";
 
 export type ImportTarget = "materiel" | "accessoires";
 export type Cell = string | number | boolean | Date | null | undefined;
@@ -29,8 +35,9 @@ export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
 // Champs importables et correspondance des colonnes
 // ---------------------------------------------------------------------------
 
-export type MaterialField = "brand" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "link_diameters" | "precharged_length_m" | "extra_charge_g_per_m" | "public_price" | "discount";
-export type AccessoryField = "reference" | "name" | "category" | "diameter" | "unit" | "public_price" | "discount";
+export type OfferField = "supplier_ref" | "ean" | "discount_family" | "net_price";
+export type MaterialField = "brand" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "link_diameters" | "precharged_length_m" | "extra_charge_g_per_m" | "public_price" | "discount" | OfferField;
+export type AccessoryField = "reference" | "name" | "category" | "diameter" | "unit" | "public_price" | "discount" | OfferField;
 export type ImportField = MaterialField | AccessoryField;
 
 export interface FieldDef {
@@ -41,29 +48,163 @@ export interface FieldDef {
   synonyms: string[];
 }
 
+const OFFER_FIELDS: FieldDef[] = [
+  {
+    key: "supplier_ref",
+    label: "Code fournisseur",
+    required: false,
+    hint: "Repris sur les bons de commande",
+    synonyms: ["code fournisseur", "ref fournisseur", "reference fournisseur", "code distributeur", "ref distributeur", "code article fournisseur", "code interne"],
+  },
+  {
+    key: "ean",
+    label: "EAN (code-barres)",
+    required: false,
+    hint: "Rapprochement certain entre fournisseurs",
+    synonyms: ["ean", "ean13", "ean 13", "gencod", "gencode", "code barre", "code barres", "code ean", "gtin"],
+  },
+  {
+    key: "discount_family",
+    label: "Famille de remise",
+    required: false,
+    hint: "Sinon : la gamme",
+    synonyms: ["famille de remise", "famille remise", "code remise", "groupe de remise", "fam remise", "famille tarifaire", "classe de remise", "groupe remise"],
+  },
+  {
+    key: "net_price",
+    label: "Prix net HT",
+    required: false,
+    hint: "Si le tarif donne directement votre prix net",
+    synonyms: ["prix net ht", "prix net", "net ht", "pnet", "prix d'achat ht", "prix d'achat", "prix achat", "votre prix", "prix remise"],
+  },
+];
+
 export const FIELDS: Record<ImportTarget, FieldDef[]> = {
   materiel: [
-    { key: "reference", label: "Référence", required: true, synonyms: ["reference", "ref", "code article", "code", "article", "modele", "code produit", "sku"] },
-    { key: "public_price", label: "Prix public HT", required: true, synonyms: ["prix public ht", "prix public", "ppi", "ppht", "tarif", "prix ht", "prix", "tarif public", "prix catalogue"] },
-    { key: "brand", label: "Marque", required: false, hint: "Sinon : marque choisie pour tout le fichier", synonyms: ["marque", "fabricant", "brand", "constructeur"] },
-    { key: "type", label: "Type d'unité", required: false, hint: "Sinon : type choisi pour tout le fichier", synonyms: ["type", "famille", "categorie", "type unite", "type d'unite"] },
-    { key: "range_name", label: "Gamme", required: false, synonyms: ["gamme", "serie", "range", "ligne"] },
-    { key: "cooling_kw", label: "Puissance froid (kW)", required: false, synonyms: ["puissance froid (kw)", "puissance froid", "froid", "p froid", "kw froid", "puissance frigorifique", "capacite froid"] },
-    { key: "heating_kw", label: "Puissance chaud (kW)", required: false, synonyms: ["puissance chaud (kw)", "puissance chaud", "chaud", "p chaud", "kw chaud", "puissance calorifique", "capacite chaud"] },
-    { key: "max_outlets", label: "Sorties max", required: false, synonyms: ["sorties max", "sorties", "nb sorties", "nombre de sorties", "nb ui", "unites interieures max"] },
-    { key: "link_diameters", label: "Diamètres liaisons", required: false, synonyms: ["diametres liaisons", "diametres", "diametre liaisons", "raccordements", "liaisons", "diametre liquide/gaz"] },
-    { key: "precharged_length_m", label: "Longueur pré-chargée (m)", required: false, synonyms: ["longueur prechargee (m)", "longueur prechargee", "longueur standard", "precharge", "longueur pre chargee"] },
-    { key: "extra_charge_g_per_m", label: "Charge complémentaire (g/m)", required: false, synonyms: ["charge complementaire (g/m)", "charge complementaire", "complement de charge", "charge additionnelle", "g/m"] },
-    { key: "discount", label: "Remise (%)", required: false, hint: "Sinon : vos remises actuelles sont conservées", synonyms: ["remise (%)", "remise", "remise %", "discount", "taux de remise"] },
+    {
+      key: "reference",
+      label: "Référence",
+      required: true,
+      synonyms: ["reference", "ref", "code article", "code", "article", "modele", "code produit", "sku"],
+    },
+    {
+      key: "public_price",
+      label: "Prix public HT",
+      required: true,
+      synonyms: ["prix public ht", "prix public", "ppi", "ppht", "tarif", "prix ht", "prix", "tarif public", "prix catalogue"],
+    },
+    {
+      key: "brand",
+      label: "Marque",
+      required: false,
+      hint: "Sinon : marque choisie pour tout le fichier",
+      synonyms: ["marque", "fabricant", "brand", "constructeur"],
+    },
+    {
+      key: "type",
+      label: "Type d'unité",
+      required: false,
+      hint: "Sinon : type choisi pour tout le fichier",
+      synonyms: ["type", "famille", "categorie", "type unite", "type d'unite"],
+    },
+    {
+      key: "range_name",
+      label: "Gamme",
+      required: false,
+      synonyms: ["gamme", "serie", "range", "ligne"],
+    },
+    {
+      key: "cooling_kw",
+      label: "Puissance froid (kW)",
+      required: false,
+      synonyms: ["puissance froid (kw)", "puissance froid", "froid", "p froid", "kw froid", "puissance frigorifique", "capacite froid"],
+    },
+    {
+      key: "heating_kw",
+      label: "Puissance chaud (kW)",
+      required: false,
+      synonyms: ["puissance chaud (kw)", "puissance chaud", "chaud", "p chaud", "kw chaud", "puissance calorifique", "capacite chaud"],
+    },
+    {
+      key: "max_outlets",
+      label: "Sorties max",
+      required: false,
+      synonyms: ["sorties max", "sorties", "nb sorties", "nombre de sorties", "nb ui", "unites interieures max"],
+    },
+    {
+      key: "link_diameters",
+      label: "Diamètres liaisons",
+      required: false,
+      synonyms: ["diametres liaisons", "diametres", "diametre liaisons", "raccordements", "liaisons", "diametre liquide/gaz"],
+    },
+    {
+      key: "precharged_length_m",
+      label: "Longueur pré-chargée (m)",
+      required: false,
+      synonyms: ["longueur prechargee (m)", "longueur prechargee", "longueur standard", "precharge", "longueur pre chargee"],
+    },
+    {
+      key: "extra_charge_g_per_m",
+      label: "Charge complémentaire (g/m)",
+      required: false,
+      synonyms: ["charge complementaire (g/m)", "charge complementaire", "complement de charge", "charge additionnelle", "g/m"],
+    },
+    {
+      key: "discount",
+      label: "Remise (%)",
+      required: false,
+      hint: "Sinon : vos remises actuelles sont conservées",
+      synonyms: ["remise (%)", "remise", "remise %", "discount", "taux de remise"],
+    },
+    ...OFFER_FIELDS,
   ],
   accessoires: [
-    { key: "reference", label: "Référence", required: true, synonyms: ["reference", "ref", "code article", "code", "article", "sku"] },
-    { key: "name", label: "Désignation", required: true, synonyms: ["designation", "libelle", "nom", "description", "produit"] },
-    { key: "public_price", label: "Prix public HT", required: true, synonyms: ["prix public ht", "prix public", "ppi", "tarif", "prix ht", "prix", "prix catalogue"] },
-    { key: "category", label: "Catégorie", required: false, hint: "Sinon : catégorie choisie pour tout le fichier", synonyms: ["categorie", "famille", "type"] },
-    { key: "diameter", label: "Diamètre", required: false, synonyms: ["diametre", "dimension", "section"] },
-    { key: "unit", label: "Unité (u, m, kg)", required: false, synonyms: ["unite", "unite de vente", "uv", "conditionnement"] },
-    { key: "discount", label: "Remise (%)", required: false, hint: "Sinon : vos remises actuelles sont conservées", synonyms: ["remise (%)", "remise", "remise %", "discount", "taux de remise"] },
+    {
+      key: "reference",
+      label: "Référence",
+      required: true,
+      synonyms: ["reference", "ref", "code article", "code", "article", "sku"],
+    },
+    {
+      key: "name",
+      label: "Désignation",
+      required: true,
+      synonyms: ["designation", "libelle", "nom", "description", "produit"],
+    },
+    {
+      key: "public_price",
+      label: "Prix public HT",
+      required: false,
+      hint: "Ou « Prix net HT »",
+      synonyms: ["prix public ht", "prix public", "ppi", "tarif", "prix ht", "prix", "prix catalogue"],
+    },
+    {
+      key: "category",
+      label: "Catégorie",
+      required: false,
+      hint: "Sinon : catégorie choisie pour tout le fichier",
+      synonyms: ["categorie", "famille", "type"],
+    },
+    {
+      key: "diameter",
+      label: "Diamètre",
+      required: false,
+      synonyms: ["diametre", "dimension", "section"],
+    },
+    {
+      key: "unit",
+      label: "Unité (u, m, kg)",
+      required: false,
+      synonyms: ["unite", "unite de vente", "uv", "conditionnement"],
+    },
+    {
+      key: "discount",
+      label: "Remise (%)",
+      required: false,
+      hint: "Sinon : vos remises actuelles sont conservées",
+      synonyms: ["remise (%)", "remise", "remise %", "discount", "taux de remise"],
+    },
+    ...OFFER_FIELDS,
   ],
 };
 
@@ -273,6 +414,10 @@ export interface MaterialRow {
   extra_charge_g_per_m: number | null;
   public_price_cents: number;
   discount_rate: number | null; // null = non fourni par le fichier
+  supplier_ref: string | null;
+  ean: string | null;
+  discount_family: string | null;
+  net_price_cents: number | null;
 }
 
 export interface AccessoryRow {
@@ -282,8 +427,12 @@ export interface AccessoryRow {
   category: string;
   diameter: string | null;
   unit: string;
-  public_price_cents: number;
+  public_price_cents: number | null;
   discount_rate: number | null;
+  supplier_ref: string | null;
+  ean: string | null;
+  discount_family: string | null;
+  net_price_cents: number | null;
 }
 
 export interface RowError {
@@ -309,6 +458,7 @@ export function projectRows(table: Cell[][], headerIndex: number, mapping: Mappi
 export function validateMapping(mapping: Mapping, target: ImportTarget, defaults: ImportDefaults): string[] {
   const problems: string[] = [];
   for (const f of FIELDS[target]) if (f.required && !mapping[f.key]) problems.push(`Choisissez la colonne « ${f.label} »`);
+  if (target === "accessoires" && !mapping.public_price && !mapping.net_price) problems.push("Choisissez la colonne « Prix public HT » ou « Prix net HT »");
   if (target === "materiel") {
     if (!mapping.brand && !defaults.brand?.trim()) problems.push("Choisissez la colonne « Marque » ou une marque pour tout le fichier");
     if (!mapping.type && !defaults.type) problems.push("Choisissez la colonne « Type d'unité » ou un type pour tout le fichier");
@@ -331,7 +481,9 @@ export function normalizeMaterialRows(rows: { line: number; cells: MappedRow }[]
     const precharged = cellNumber(cells.precharged_length_m);
     const gPerM = cellNumber(cells.extra_charge_g_per_m);
     const dia = cellText(cells.link_diameters);
+    const net = cells.net_price !== undefined && cellText(cells.net_price) !== "" ? parsePriceCents(cells.net_price) : null;
     const msgs: string[] = [];
+    if (cells.net_price !== undefined && cellText(cells.net_price) !== "" && net === null) msgs.push(`prix net illisible (« ${cellText(cells.net_price)} »)`);
     if (!reference) msgs.push("référence manquante");
     if (!brand) msgs.push("marque manquante");
     if (price === null || price === 0) msgs.push(`prix illisible (« ${cellText(cells.public_price)} »)`);
@@ -359,9 +511,20 @@ export function normalizeMaterialRows(rows: { line: number; cells: MappedRow }[]
       extra_charge_g_per_m: gPerM === null ? null : Math.round(gPerM),
       public_price_cents: price!,
       discount_rate: discount as number | null,
+      ...offerCells(cells, net),
+      discount_family: cellText(cells.discount_family) || cellText(cells.range_name) || null,
     });
   }
   return { rows: out, errors };
+}
+
+function offerCells(cells: MappedRow, net: number | null) {
+  return {
+    supplier_ref: cellText(cells.supplier_ref) || null,
+    ean: normalizeEan(cellText(cells.ean)),
+    discount_family: cellText(cells.discount_family) || null,
+    net_price_cents: net,
+  };
 }
 
 export function normalizeAccessoryRows(rows: { line: number; cells: MappedRow }[], defaults: ImportDefaults) {
@@ -370,12 +533,17 @@ export function normalizeAccessoryRows(rows: { line: number; cells: MappedRow }[
   for (const { line, cells } of rows) {
     const reference = cellText(cells.reference);
     const name = cellText(cells.name);
-    const price = parsePriceCents(cells.public_price);
+    const hasPublic = cells.public_price !== undefined && cellText(cells.public_price) !== "";
+    const hasNet = cells.net_price !== undefined && cellText(cells.net_price) !== "";
+    const price = hasPublic ? parsePriceCents(cells.public_price) : null;
+    const net = hasNet ? parsePriceCents(cells.net_price) : null;
     const discount = parseDiscount(cells.discount);
     const msgs: string[] = [];
     if (!reference) msgs.push("référence manquante");
     if (!name) msgs.push("désignation manquante");
-    if (price === null || price === 0) msgs.push(`prix illisible (« ${cellText(cells.public_price)} »)`);
+    if (hasPublic && (price === null || price === 0)) msgs.push(`prix illisible (« ${cellText(cells.public_price)} »)`);
+    if (hasNet && net === null) msgs.push(`prix net illisible (« ${cellText(cells.net_price)} »)`);
+    if (!hasPublic && !hasNet) msgs.push("prix manquant");
     if (discount === "invalid") msgs.push(`remise illisible (« ${cellText(cells.discount)} »)`);
     if (msgs.length) {
       errors.push({ line, message: msgs.join(", ") });
@@ -388,8 +556,9 @@ export function normalizeAccessoryRows(rows: { line: number; cells: MappedRow }[
       category: (cellText(cells.category) || defaults.category || "autre").toLowerCase(),
       diameter: cellText(cells.diameter) || null,
       unit: parseUnit(cells.unit) ?? "u",
-      public_price_cents: price!,
+      public_price_cents: price,
       discount_rate: discount as number | null,
+      ...offerCells(cells, net),
     });
   }
   return { rows: out, errors };
@@ -399,13 +568,22 @@ export function normalizeAccessoryRows(rows: { line: number; cells: MappedRow }[
 // Plan d'import
 // ---------------------------------------------------------------------------
 
+/** Tarif actuel du fournisseur importé pour un article. */
+export interface ExistingOffer {
+  public_price_cents: number | null;
+  net_price_cents: number | null;
+  discount_rate: number | null;
+  match_status: "certain" | "probable" | "manuel";
+}
+
 export interface ExistingItem {
   id: string;
   brand?: string; // matériel uniquement
   reference: string;
+  ean?: string | null;
   label: string;
-  public_price_cents: number;
-  discount_rate: number | null;
+  /** Offre du fournisseur importé pour cet article (null = pas encore chez lui). */
+  offer: ExistingOffer | null;
 }
 
 export interface PriceChange {
@@ -418,14 +596,47 @@ export interface PriceChange {
   change: number;
 }
 
+export interface OfferData {
+  supplier_ref: string | null;
+  manufacturer_ref: string;
+  ean: string | null;
+  designation: string | null;
+  public_price_cents: number | null;
+  net_price_cents: number | null;
+  discount_family: string | null;
+  /** Absente = ne pas toucher à la remise existante. */
+  discount_rate?: number;
+}
+
+export interface OfferUpsert extends OfferData {
+  item_id: string;
+  match_status: "certain" | "probable";
+  match_reason: string;
+}
+
+export interface ProbableMatch {
+  line: number;
+  label: string;
+  candidateId: string;
+  candidateLabel: string;
+}
+
 export interface ImportPlan {
+  /** Nouveaux articles, chacun avec son offre (`offer`). */
   creates: Record<string, unknown>[];
+  /** Offres du fournisseur pour des articles existants (création ou mise à jour). */
+  offers: OfferUpsert[];
+  /** Champs techniques mis à jour (matériel, correspondance certaine). */
   updates: Record<string, unknown>[];
-  brandsToCreate: { name: string; discount_rate: null }[];
+  probable: ProbableMatch[];
+  brandsToCreate: { name: string }[];
   priceChanges: PriceChange[];
   errors: RowError[];
   summary: {
     newItems: number;
+    /** Articles déjà au catalogue, nouveaux chez ce fournisseur. */
+    newOffers: number;
+    probable: number;
     priceChanges: number;
     bigIncreases: number;
     decreases: number;
@@ -437,17 +648,54 @@ export interface ImportPlan {
 
 const keyOf = (brand: string | undefined, reference: string) => `${(brand ?? "").trim().toLowerCase()}|${normalizeReference(reference)}`;
 
+function offerOf(row: MaterialRow | AccessoryRow, designation: string | null): OfferData {
+  const o: OfferData = {
+    supplier_ref: row.supplier_ref,
+    manufacturer_ref: row.reference,
+    ean: row.ean,
+    designation,
+    public_price_cents: row.public_price_cents,
+    net_price_cents: row.net_price_cents,
+    discount_family: row.discount_family,
+  };
+  if (row.discount_rate !== null) o.discount_rate = row.discount_rate;
+  return o;
+}
+
+const TECH_FIELDS = ["range_name", "cooling_kw", "heating_kw", "max_outlets", "link_diameters", "precharged_length_m", "extra_charge_g_per_m"] as const;
+
 export function buildPlan(target: ImportTarget, rows: (MaterialRow | AccessoryRow)[], existing: ExistingItem[], existingBrands: string[], rowErrors: RowError[] = []): ImportPlan {
-  const byKey = new Map(existing.map((e) => [keyOf(target === "materiel" ? e.brand : undefined, e.reference), e]));
+  const index = buildMatchIndex(
+    existing.map((e) => ({
+      id: e.id,
+      reference: e.reference,
+      brandName: e.brand ?? null,
+      ean: e.ean ?? null,
+    })),
+  );
+  const byId = new Map(existing.map((e) => [e.id, e]));
   const brandSet = new Map(existingBrands.map((b) => [b.trim().toLowerCase(), b]));
   const seen = new Map<string, number>();
+  const taken = new Set<string>();
   const plan: ImportPlan = {
     creates: [],
+    offers: [],
     updates: [],
+    probable: [],
     brandsToCreate: [],
     priceChanges: [],
     errors: [...rowErrors],
-    summary: { newItems: 0, priceChanges: 0, bigIncreases: 0, decreases: 0, discountChanges: 0, unchanged: 0, errors: 0 },
+    summary: {
+      newItems: 0,
+      newOffers: 0,
+      probable: 0,
+      priceChanges: 0,
+      bigIncreases: 0,
+      decreases: 0,
+      discountChanges: 0,
+      unchanged: 0,
+      errors: 0,
+    },
   };
 
   for (const row of rows) {
@@ -467,39 +715,93 @@ export function buildPlan(target: ImportTarget, rows: (MaterialRow | AccessoryRo
       if (known) brandName = known;
       else {
         brandSet.set(brand.trim().toLowerCase(), brand.trim());
-        plan.brandsToCreate.push({ name: brand.trim(), discount_rate: null });
+        plan.brandsToCreate.push({ name: brand.trim() });
         brandName = brand.trim();
       }
     }
+    const designation = target === "accessoires" ? (row as AccessoryRow).name : null;
+    const rowLabel = target === "materiel" ? `${brandName} ${row.reference}` : `${row.reference} – ${designation}`;
 
-    const current = byKey.get(key);
-    if (!current) {
-      const { line: _l, brand: _b, ...data } = row as MaterialRow;
-      plan.creates.push(target === "materiel" ? { ...data, brand: brandName } : data);
+    let match = matchWithIndex(index, {
+      reference: row.reference,
+      brandName: brandName ?? null,
+      ean: row.ean,
+    });
+    if (match.candidateId && taken.has(match.candidateId)) {
+      if (match.status === "certain") {
+        plan.errors.push({
+          line: row.line,
+          message: "article déjà présent plus haut dans le fichier (même EAN ou même référence), ligne ignorée",
+        });
+        continue;
+      }
+      match = { status: "none", candidateId: null, reason: "" };
+    }
+
+    if (match.status === "none" || !match.candidateId) {
+      const { line: _l, brand: _b, supplier_ref: _s, ean: _e, discount_family: _f, net_price_cents: _n, public_price_cents: _p, discount_rate: _d, ...data } = row as MaterialRow;
+      plan.creates.push({
+        ...(target === "materiel" ? { ...data, brand: brandName } : data),
+        offer: offerOf(row, designation),
+      });
       plan.summary.newItems++;
       continue;
     }
 
-    const priceChanged = row.public_price_cents !== current.public_price_cents;
-    const discountChanged = row.discount_rate !== null && row.discount_rate !== current.discount_rate;
+    const current = byId.get(match.candidateId)!;
+    taken.add(current.id);
+    if (match.status === "probable") {
+      plan.probable.push({
+        line: row.line,
+        label: rowLabel,
+        candidateId: current.id,
+        candidateLabel: current.label,
+      });
+      plan.summary.probable++;
+    }
+    const offer = offerOf(row, designation);
+    const prev = current.offer;
+    if (target === "materiel" && match.status === "certain") {
+      const m = row as MaterialRow;
+      const update: Record<string, unknown> = { id: current.id };
+      for (const k of TECH_FIELDS) if (m[k] !== null) update[k] = m[k];
+      if (Object.keys(update).length > 1) plan.updates.push(update);
+    }
+    if (!prev) {
+      plan.offers.push({
+        ...offer,
+        item_id: current.id,
+        match_status: match.status,
+        match_reason: match.reason,
+      });
+      if (match.status === "certain") plan.summary.newOffers++;
+      continue;
+    }
+    const priceChanged = offer.public_price_cents !== prev.public_price_cents || offer.net_price_cents !== prev.net_price_cents;
+    const discountChanged = offer.discount_rate !== undefined && offer.discount_rate !== prev.discount_rate;
+    plan.offers.push({
+      ...offer,
+      item_id: current.id,
+      match_status: match.status,
+      match_reason: match.reason,
+    });
     if (!priceChanged && !discountChanged) {
       plan.summary.unchanged++;
       continue;
     }
-    const update: Record<string, unknown> = { id: current.id, public_price_cents: row.public_price_cents };
-    // Remise absente du fichier → on ne touche pas à la remise saisie à la main.
-    if (row.discount_rate !== null) update.discount_rate = row.discount_rate;
-    if (target === "materiel") {
-      const m = row as MaterialRow;
-      for (const k of ["range_name", "cooling_kw", "heating_kw", "max_outlets", "link_diameters", "precharged_length_m", "extra_charge_g_per_m"] as const) if (m[k] !== null) update[k] = m[k];
-    } else {
-      update.name = (row as AccessoryRow).name;
-    }
-    plan.updates.push(update);
     if (discountChanged) plan.summary.discountChanges++;
-    if (priceChanged) {
-      const change = (row.public_price_cents - current.public_price_cents) / current.public_price_cents;
-      plan.priceChanges.push({ id: current.id, line: row.line, label: current.label, oldPriceCents: current.public_price_cents, newPriceCents: row.public_price_cents, change });
+    const oldP = prev.public_price_cents ?? prev.net_price_cents;
+    const newP = offer.public_price_cents ?? offer.net_price_cents;
+    if (priceChanged && oldP && newP !== null) {
+      const change = (newP - oldP) / oldP;
+      plan.priceChanges.push({
+        id: current.id,
+        line: row.line,
+        label: current.label,
+        oldPriceCents: oldP,
+        newPriceCents: newP,
+        change,
+      });
       plan.summary.priceChanges++;
       if (change > BIG_INCREASE) plan.summary.bigIncreases++;
       if (change < 0) plan.summary.decreases++;
@@ -519,17 +821,34 @@ export function templateCsv(target: ImportTarget): string {
   const rows =
     target === "materiel"
       ? [
-          ["Marque", "Gamme", "Référence", "Type", "Puissance froid (kW)", "Puissance chaud (kW)", "Sorties max", "Diamètres liaisons", "Longueur pré-chargée (m)", "Charge complémentaire (g/m)", "Prix public HT", "Remise (%)"],
-          ["MaMarque", "Confort", "UE-35", "Unité extérieure mono-split", "3,5", "4,0", "1", "1/4 - 3/8", "7,5", "20", "1090,00", "35"],
-          ["MaMarque", "Confort", "MU-35", "Murale", "3,5", "4,0", "", "1/4 - 3/8", "", "", "540,00", ""],
-          ["MaMarque", "Multi", "M3-68", "Unité extérieure multi-split", "6,8", "8,6", "3", "", "30", "20", "2790,00", "35"],
-          ["MaMarque", "Pro", "GA-50", "Gainable", "5,0", "6,0", "", "1/4 - 1/2", "", "", "1390,00", ""],
+          [
+            "Marque",
+            "Gamme",
+            "Référence",
+            "Code fournisseur",
+            "EAN",
+            "Famille de remise",
+            "Type",
+            "Puissance froid (kW)",
+            "Puissance chaud (kW)",
+            "Sorties max",
+            "Diamètres liaisons",
+            "Longueur pré-chargée (m)",
+            "Charge complémentaire (g/m)",
+            "Prix public HT",
+            "Remise (%)",
+          ],
+          ["MaMarque", "Confort", "UE-35", "F-10235", "", "UE MONO", "Unité extérieure mono-split", "3,5", "4,0", "1", "1/4 - 3/8", "7,5", "20", "1090,00", "35"],
+          ["MaMarque", "Confort", "MU-35", "F-10236", "", "MURAUX", "Murale", "3,5", "4,0", "", "1/4 - 3/8", "", "", "540,00", ""],
+          ["MaMarque", "Multi", "M3-68", "F-10240", "", "UE MULTI", "Unité extérieure multi-split", "6,8", "8,6", "3", "", "30", "20", "2790,00", "35"],
+          ["MaMarque", "Pro", "GA-50", "F-10250", "", "GAINABLES", "Gainable", "5,0", "6,0", "", "1/4 - 1/2", "", "", "1390,00", ""],
         ]
       : [
-          ["Référence", "Désignation", "Catégorie", "Diamètre", "Unité", "Prix public HT", "Remise (%)"],
-          ["LIA-1438", "Liaison frigorifique isolée", "liaison", "1/4 - 3/8", "m", "12,00", "30"],
-          ["GOU-8060", "Goulotte de finition 80 × 60", "goulotte", "", "m", "14,00", "25"],
-          ["POM-REL", "Pompe de relevage des condensats", "pompe", "", "u", "120,00", ""],
+          ["Référence", "Code fournisseur", "Désignation", "Catégorie", "Famille de remise", "Diamètre", "Unité", "Prix public HT", "Remise (%)", "Prix net HT"],
+          ["LIA-1438", "F-20001", "Liaison frigorifique isolée", "liaison", "LIAISONS", "1/4 - 3/8", "m", "12,00", "30", ""],
+          ["GOU-8060", "F-20002", "Goulotte de finition 80 × 60", "goulotte", "GOULOTTES", "", "m", "14,00", "25", ""],
+          ["POM-REL", "F-20003", "Pompe de relevage des condensats", "pompe", "", "", "u", "120,00", "", ""],
+          ["CAROT-60", "F-20004", "Carottage Ø 60", "autre", "", "", "u", "", "", "18,00"],
         ];
   const esc = (v: string) => (/[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   // BOM pour qu'Excel ouvre correctement les accents

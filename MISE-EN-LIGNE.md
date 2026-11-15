@@ -184,6 +184,23 @@ Ce sont VOS informations (vendeur de ClimDevis), affichées dans les mentions l�
 
 ---
 
+## Partie F bis — Lecture des tarifs PDF par l'IA (facultatif, 5 min)
+
+Sans cette clé, tout fonctionne ; seul l'import Excel / CSV des tarifs est proposé.
+
+- Sur **console.anthropic.com**, créez un compte, ajoutez un moyen de paiement, puis **API Keys** › **Create Key**.
+- Réglez une **limite de dépenses mensuelle** (Settings › Limits) : c'est votre filet de sécurité en plus des quotas
+  par formule de ClimDevis (Solo 300 pages / Équipe 1 000 / Entreprise 3 000 par mois).
+- Dans Vercel › **Settings** › **Environment Variables**, ajoutez `ANTHROPIC_API_KEY` = la clé (ne la collez nulle part ailleurs), puis **Redeploy**.
+- Facultatif : `ANTHROPIC_TARIFF_MODEL` pour changer de modèle (par défaut `claude-opus-5-5`).
+- Test : **Catalogue › Importer un tarif**, choisissez un PDF, sélectionnez 2 ou 3 pages de prix, vérifiez les lignes lues puis le résumé.
+
+> Base déjà installée avant le bloc « multi-fournisseurs » ? Dans Supabase › **SQL Editor**, exécutez seulement
+> le fichier `supabase/migrations/20261115000010_multi_suppliers.sql` (une fois). Une installation neuve avec
+> `supabase/climdevis-installation.sql` le contient déjà.
+
+---
+
 ## Partie G — Tester de bout en bout (15 min)
 
 61. Ouvrez « ADRESSE DU SITE » : la page d'accueil s'affiche avec les tarifs et « Plus que 50 places ».
@@ -222,6 +239,7 @@ Ce sont VOS informations (vendeur de ClimDevis), affichées dans les mentions l�
 | `STRIPE_SECRET_KEY` | Stripe › Developers › API keys › Secret key |
 | `STRIPE_WEBHOOK_SECRET` | Stripe › Developers › Webhooks › votre webhook › Signing secret |
 | `STRIPE_PRICE_…` (7) | Stripe › Product catalog › chaque prix › ID `price_…` |
+| `ANTHROPIC_API_KEY` (facultatif) | console.anthropic.com › API Keys (lecture des tarifs PDF) |
 
 ### En cas de problème
 

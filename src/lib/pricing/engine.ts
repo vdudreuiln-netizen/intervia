@@ -52,6 +52,12 @@ export interface QuoteInput {
   laborDays: number;
   settings: PricingSettings;
   discount?: QuoteDiscount | null;
+  /**
+   * Frais de port fournisseur restant à la charge de l'artisan (coût interne,
+   * non refacturé) : déduits de la marge nette, ligne « Frais de port » de « Ma marge ».
+   * S'ils sont refacturés, ils figurent à la place dans une ligne du devis.
+   */
+  shippingCostCents?: number;
 }
 
 export interface PricedLine extends QuoteLineInput {
@@ -93,6 +99,8 @@ export interface MarginPanel {
   otherSaleCents: number;
   laborChargesCents: number;
   materialChargesCents: number;
+  /** Frais de port fournisseur non refacturés (coût interne). */
+  shippingCostCents: number;
   netMarginCents: number;
   netMarginRate: number; // marge nette / CA HT
   marginPerDayCents: number | null; // null si 0 jour
@@ -181,13 +189,26 @@ export interface CatalogPrices {
 
 /**
  * Prix d'un article du catalogue, tels qu'ils seront repris dans un devis.
- *  - matériel    : achat = public × (1 − remise) ; vente = PUBLIC × coefficient (marque ou devis)
- *  - accessoire  : achat = public × (1 − remise), ou prix d'achat saisi s'il n'y a pas de prix public ;
- *                  vente = le plus élevé de (PUBLIC × coefficient accessoires) et (ACHAT × coefficient sur achat).
- *                  Sans prix public : ACHAT × coefficient sur achat.
+ *  - matériel    : achat = prix NET du fournisseur retenu (`netPurchaseCents`), à défaut
+ *                  public × (1 − remise) ; vente = PUBLIC de référence × coefficient (marque ou devis)
+ *  - accessoire  : achat = prix NET du fournisseur retenu, à défaut public × (1 − remise), ou
+ *                  prix d'achat saisi s'il n'y a pas de prix public ;
+ *                  vente = le plus élevé de (PUBLIC × coefficient accessoires) et (PLANCHER × coefficient sur achat),
+ *                  le plancher étant le prix net le plus élevé chez les fournisseurs (`floorPurchaseCents`),
+ *                  à défaut l'achat : changer de fournisseur ne change jamais le prix client.
  */
 export function catalogPrices(
-  item: { kind: "material"; publicPriceCents: number; brandDiscount: number | null; productDiscount: number | null; brandCoefficient: number | null; quoteCoefficient?: number | null }
+  item:
+    | {
+        kind: "material";
+        publicPriceCents: number;
+        brandDiscount: number | null;
+        productDiscount: number | null;
+        brandCoefficient: number | null;
+        quoteCoefficient?: number | null;
+        /** Prix net du fournisseur retenu (multi-fournisseurs). */
+        netPurchaseCents?: number | null;
+      }
     | {
         kind: "accessory";
         publicPriceCents: number | null;
@@ -197,23 +218,46 @@ export function catalogPrices(
         companyCoefficient: number | null;
         purchaseCoefficient?: number | null;
         quoteCoefficient?: number | null;
+        netPurchaseCents?: number | null;
+        floorPurchaseCents?: number | null;
       },
 ): CatalogPrices {
+  const net = item.netPurchaseCents ?? null;
   if (item.kind === "material") {
-    const discount = effectiveDiscount(item.brandDiscount, item.productDiscount);
-    const purchaseCents = purchasePriceCents(item.publicPriceCents, discount);
     const coef = effectiveSaleCoefficient(item.brandCoefficient, item.quoteCoefficient);
-    return { discount, purchaseCents, saleCents: materialSalePriceCents(item.publicPriceCents, coef) };
+    const saleCents = materialSalePriceCents(item.publicPriceCents, coef);
+    if (net !== null)
+      return {
+        discount: item.publicPriceCents > 0 ? Math.max(0, 1 - net / item.publicPriceCents) : 0,
+        purchaseCents: net,
+        saleCents,
+      };
+    const discount = effectiveDiscount(item.brandDiscount, item.productDiscount);
+    return {
+      discount,
+      purchaseCents: purchasePriceCents(item.publicPriceCents, discount),
+      saleCents,
+    };
   }
   const purchaseCoef = effectiveSaleCoefficient(item.purchaseCoefficient ?? DEFAULT_ACCESSORY_PURCHASE_COEFFICIENT, null);
   if (item.publicPriceCents === null) {
-    const purchaseCents = Math.max(0, item.purchasePriceCents ?? 0);
-    return { discount: 0, purchaseCents, saleCents: roundCents(purchaseCents * purchaseCoef) };
+    const purchaseCents = net ?? Math.max(0, item.purchasePriceCents ?? 0);
+    const floor = item.floorPurchaseCents ?? purchaseCents;
+    return {
+      discount: 0,
+      purchaseCents,
+      saleCents: roundCents(floor * purchaseCoef),
+    };
   }
-  const discount = effectiveDiscount(null, item.discount);
-  const purchaseCents = purchasePriceCents(item.publicPriceCents, discount);
+  const discount = net !== null ? (item.publicPriceCents > 0 ? Math.max(0, 1 - net / item.publicPriceCents) : 0) : effectiveDiscount(null, item.discount);
+  const purchaseCents = net ?? purchasePriceCents(item.publicPriceCents, discount);
+  const floor = item.floorPurchaseCents ?? purchaseCents;
   const coef = effectiveSaleCoefficient(item.companyCoefficient ?? DEFAULT_ACCESSORY_COEFFICIENT, item.quoteCoefficient);
-  return { discount, purchaseCents, saleCents: Math.max(materialSalePriceCents(item.publicPriceCents, coef), roundCents(purchaseCents * purchaseCoef)) };
+  return {
+    discount,
+    purchaseCents,
+    saleCents: Math.max(materialSalePriceCents(item.publicPriceCents, coef), roundCents(floor * purchaseCoef)),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,14 +395,36 @@ export function computeQuote(input: QuoteInput): QuoteResult {
     .map(([rate, baseCents]) => ({ rate, baseCents, vatCents: roundCents(baseCents * rate) }));
   const totalVatCents = vat.reduce((a, v) => a + v.vatCents, 0);
 
-  const materialSaleCents = sum((l) => isMaterial(l.kind), (l) => l.totalSaleCents);
-  const laborSaleCents = sum((l) => l.kind === "labor", (l) => l.totalSaleCents);
-  const travelSaleCents = sum((l) => l.kind === "travel", (l) => l.totalSaleCents);
-  const otherSaleCents = sum((l) => l.kind === "other", (l) => l.totalSaleCents);
-  const purchaseCostCents = sum(() => true, (l) => l.totalPurchaseCents);
-  const materialChargesCents = sum((l) => isMaterial(l.kind), (l) => l.chargesCents);
-  const laborChargesCents = sum((l) => !isMaterial(l.kind), (l) => l.chargesCents);
-  const netMarginCents = totalHtCents - purchaseCostCents - materialChargesCents - laborChargesCents;
+  const materialSaleCents = sum(
+    (l) => isMaterial(l.kind),
+    (l) => l.totalSaleCents,
+  );
+  const laborSaleCents = sum(
+    (l) => l.kind === "labor",
+    (l) => l.totalSaleCents,
+  );
+  const travelSaleCents = sum(
+    (l) => l.kind === "travel",
+    (l) => l.totalSaleCents,
+  );
+  const otherSaleCents = sum(
+    (l) => l.kind === "other",
+    (l) => l.totalSaleCents,
+  );
+  const purchaseCostCents = sum(
+    () => true,
+    (l) => l.totalPurchaseCents,
+  );
+  const materialChargesCents = sum(
+    (l) => isMaterial(l.kind),
+    (l) => l.chargesCents,
+  );
+  const laborChargesCents = sum(
+    (l) => !isMaterial(l.kind),
+    (l) => l.chargesCents,
+  );
+  const shippingCostCents = Math.max(0, Math.round(input.shippingCostCents ?? 0));
+  const netMarginCents = totalHtCents - purchaseCostCents - materialChargesCents - laborChargesCents - shippingCostCents;
   const marginPerDayCents = input.laborDays > 0 ? roundCents(netMarginCents / input.laborDays) : null;
 
   const alerts: QuoteAlert[] = [];
@@ -398,6 +464,7 @@ export function computeQuote(input: QuoteInput): QuoteResult {
       otherSaleCents,
       laborChargesCents,
       materialChargesCents,
+      shippingCostCents,
       netMarginCents,
       netMarginRate: totalHtCents > 0 ? netMarginCents / totalHtCents : 0,
       marginPerDayCents,

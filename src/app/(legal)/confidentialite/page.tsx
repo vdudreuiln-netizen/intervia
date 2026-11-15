@@ -46,6 +46,10 @@ export default function Confidentialite() {
         <li>Base de données et authentification : {HOSTING.database}.</li>
         <li>Application : {HOSTING.app}.</li>
         <li>Paiements : {HOSTING.payments}.</li>
+        <li>
+          Lecture automatique des tarifs fournisseurs en PDF (uniquement si vous l&apos;utilisez) : {HOSTING.ai}. Seules les pages de tarif que vous choisissez sont transmises ; elles ne contiennent normalement aucune donnée personnelle de vos
+          clients. Selon les conditions commerciales du prestataire, ces données ne servent pas à entraîner ses modèles.
+        </li>
         <li>Géocodage des adresses : Institut national de l&apos;information géographique et forestière (IGN, Géoplateforme, France) — seules les adresses saisies sont transmises.</li>
         <li>Envoi des e-mails : service d&apos;envoi intégré de Supabase (phase de test, à remplacer par un prestataire dédié avant le premier client payant).</li>
       </ul>

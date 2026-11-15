@@ -413,3 +413,64 @@ describe("arrondi aux seuils psychologiques", () => {
     expect(again.result.totalTtcCents).toBe(249000);
   });
 });
+
+describe("multi-fournisseurs : prix d'achat net du fournisseur retenu", () => {
+  it("matériel : l'achat suit le fournisseur, la vente reste celle du prix public de référence", () => {
+    const base = {
+      kind: "material" as const,
+      publicPriceCents: 100000,
+      brandDiscount: 0.3,
+      productDiscount: null,
+      brandCoefficient: 1,
+    };
+    const legacy = catalogPrices(base);
+    const supplier = catalogPrices({ ...base, netPurchaseCents: 61500 });
+    expect(legacy.purchaseCents).toBe(70000);
+    expect(supplier.purchaseCents).toBe(61500);
+    expect(supplier.discount).toBeCloseTo(0.385);
+    expect(supplier.saleCents).toBe(legacy.saleCents);
+  });
+  it("accessoire : plancher sur le prix net le plus élevé, pour un prix client stable", () => {
+    const base = {
+      kind: "accessory" as const,
+      publicPriceCents: 1000,
+      discount: 0.3,
+      companyCoefficient: 1.3,
+      purchaseCoefficient: 2,
+    };
+    const cheap = catalogPrices({
+      ...base,
+      netPurchaseCents: 600,
+      floorPurchaseCents: 700,
+    });
+    const dear = catalogPrices({
+      ...base,
+      netPurchaseCents: 700,
+      floorPurchaseCents: 700,
+    });
+    expect(cheap.purchaseCents).toBe(600);
+    expect(cheap.saleCents).toBe(1400); // max(1000 × 1,3 ; 700 × 2)
+    expect(dear.saleCents).toBe(cheap.saleCents);
+  });
+  it("accessoire sans prix public : prix net seul, plancher × coefficient sur achat", () => {
+    const p = catalogPrices({
+      kind: "accessory",
+      publicPriceCents: null,
+      discount: null,
+      companyCoefficient: 1.3,
+      purchaseCoefficient: 2,
+      netPurchaseCents: 800,
+      floorPurchaseCents: 900,
+    });
+    expect(p).toMatchObject({ purchaseCents: 800, saleCents: 1800 });
+  });
+  it("frais de port internes : déduits de la marge, sans toucher au prix client ni à la TVA", () => {
+    const input = quote(assujetti);
+    const a = computeQuote(input);
+    const b = computeQuote({ ...input, shippingCostCents: 2500 });
+    expect(b.totalTtcCents).toBe(a.totalTtcCents);
+    expect(a.margin.netMarginCents - b.margin.netMarginCents).toBe(2500);
+    expect(b.margin.shippingCostCents).toBe(2500);
+    expect(maxDiscount({ ...input, shippingCostCents: 2500 }).cents).toBeLessThanOrEqual(maxDiscount(input).cents);
+  });
+});

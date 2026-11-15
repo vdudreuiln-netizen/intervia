@@ -17,7 +17,25 @@ const PAGE = 100;
 const kw = (n: number | null) => (n === null ? "" : `${n.toLocaleString("fr-FR")} kW`);
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-export function CatalogView({ tab, brands, products, accessories, accessoryCoefficient, purchaseCoefficient, isAdmin = true, showMargin = true }: { tab: Tab; brands: BrandItem[]; products: ProductItem[]; accessories: AccessoryItem[]; accessoryCoefficient: number; purchaseCoefficient: number; isAdmin?: boolean; showMargin?: boolean }) {
+export function CatalogView({
+  tab,
+  brands,
+  products,
+  accessories,
+  accessoryCoefficient,
+  purchaseCoefficient,
+  isAdmin = true,
+  showMargin = true,
+}: {
+  tab: Tab;
+  brands: BrandItem[];
+  products: (ProductItem & WithSupplier)[];
+  accessories: (AccessoryItem & WithSupplier)[];
+  accessoryCoefficient: number;
+  purchaseCoefficient: number;
+  isAdmin?: boolean;
+  showMargin?: boolean;
+}) {
   const hasExamples = brands.some((b) => b.is_example) || accessories.some((a) => a.is_example);
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "materiel", label: "Matériel", count: products.length },
@@ -77,7 +95,7 @@ function Actions({ addHref, addLabel, target }: { addHref: string; addLabel: str
   if (!useContext(CatalogContext).isAdmin) return null;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <LinkButton href={`/app/catalogue/import?cible=${target}`}>Importer un tarif (Excel, CSV)</LinkButton>
+      <LinkButton href={`/app/catalogue/import?cible=${target}`}>Importer un tarif (Excel, CSV, PDF)</LinkButton>
       <LinkButton href={addHref} variant="secondary">
         {addLabel}
       </LinkButton>
@@ -112,7 +130,10 @@ function PriceRow({ purchase, sale, discount, discountNote }: { purchase: number
   );
 }
 
-function ProductList({ products }: { products: ProductItem[] }) {
+type WithSupplier = { supplierCount?: number; bestSupplier?: string | null };
+const supplierNote = (x: WithSupplier) => (x.bestSupplier ? `(${x.bestSupplier}${(x.supplierCount ?? 0) > 1 ? `, meilleur de ${x.supplierCount}` : ""})` : undefined);
+
+function ProductList({ products }: { products: (ProductItem & WithSupplier)[] }) {
   const [q, setQ] = useState("");
   const [type, setType] = useState<ProductType | "">("");
   const [limit, setLimit] = useState(PAGE);
@@ -160,7 +181,7 @@ function ProductList({ products }: { products: ProductItem[] }) {
                 </div>
                 {p.is_example && <span className="rounded-md bg-amber-200 px-2 py-1 text-xs font-bold text-amber-900">EXEMPLE</span>}
               </div>
-              <PriceRow purchase={p.prices.purchaseCents} sale={p.prices.saleCents} discount={p.prices.discount} discountNote={p.discount_rate === null ? "(marque)" : "(produit)"} />
+              <PriceRow purchase={p.prices.purchaseCents} sale={p.prices.saleCents} discount={p.prices.discount} discountNote={supplierNote(p) ?? (p.discount_rate === null ? "(marque)" : "(produit)")} />
             </CardLink>
           </li>
         ))}
@@ -174,7 +195,7 @@ function ProductList({ products }: { products: ProductItem[] }) {
   );
 }
 
-function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { accessories: AccessoryItem[]; coefficient: number; purchaseCoefficient: number }) {
+function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { accessories: (AccessoryItem & WithSupplier)[]; coefficient: number; purchaseCoefficient: number }) {
   const [q, setQ] = useState("");
   const filtered = accessories.filter((a) => norm(`${a.name} ${a.diameter ?? ""} ${a.reference ?? ""} ${ACCESSORY_CATEGORIES[a.category] ?? a.category}`).includes(norm(q.trim())));
   const groups = [...new Set(filtered.map((a) => a.category))];
@@ -182,7 +203,11 @@ function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { acce
     <div className="space-y-4">
       <Actions addHref="/app/catalogue/accessoires/nouveau" addLabel="+ Ajouter un accessoire" target="accessoires" />
       <p className="text-base text-slate-700">
-        Prix de vente = prix public × {coefficient.toLocaleString("fr-FR", { minimumFractionDigits: 2 })}, et jamais moins que l&apos;achat × {purchaseCoefficient.toLocaleString("fr-FR", { minimumFractionDigits: 2 })} (
+        Prix de vente = prix public × {coefficient.toLocaleString("fr-FR", { minimumFractionDigits: 2 })}, et jamais moins que l&apos;achat ×{" "}
+        {purchaseCoefficient.toLocaleString("fr-FR", {
+          minimumFractionDigits: 2,
+        })}{" "}
+        (
         <Link href="/app/parametres" className="font-bold text-brand underline">
           modifier
         </Link>
@@ -208,7 +233,7 @@ function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { acce
                       </p>
                       {a.is_example && <span className="rounded-md bg-amber-200 px-2 py-1 text-xs font-bold text-amber-900">EXEMPLE</span>}
                     </div>
-                    <PriceRow purchase={a.prices.purchaseCents} sale={a.prices.saleCents} discount={a.prices.discount} />
+                    <PriceRow purchase={a.prices.purchaseCents} sale={a.prices.saleCents} discount={a.prices.discount} discountNote={supplierNote(a)} />
                   </CardLink>
                 </li>
               ))}
@@ -223,7 +248,11 @@ function BrandList({ brands }: { brands: BrandItem[] }) {
   return (
     <div className="space-y-4">
       <p className="text-base text-slate-700">
-        Remise fournisseur appliquée à tous les produits de la marque (sauf remise propre à un produit). Prix de vente = prix public × coefficient : 1,00 = prix public, 1,10 = prix public + 10 %.
+        Prix de vente = prix public de référence × coefficient : 1,00 = prix public, 1,10 = prix public + 10 %. Les remises se règlent par fournisseur (menu{" "}
+        <Link href="/app/fournisseurs" className="font-bold underline">
+          Fournisseurs
+        </Link>
+        ).
       </p>
       {brands.map((b) => (
         <BrandEditor key={b.id} brand={b} />
@@ -247,10 +276,7 @@ function BrandEditor({ brand }: { brand?: BrandItem }) {
     <Card title={brand ? undefined : "Ajouter une marque"}>
       <Field label="Marque" value={form.name} onChange={set("name")} error={errors.name} />
       {brand?.is_example && <p className="text-sm font-bold text-amber-800">Marque d&apos;exemple (fictive)</p>}
-      <div className="grid grid-cols-2 gap-3">
-        <PercentField label="Remise" value={form.discount} onChange={set("discount")} error={errors.discount} />
-        <Field label="Coefficient de vente" value={form.sale_coefficient} onChange={set("sale_coefficient")} error={errors.sale_coefficient} inputMode="decimal" suffix="×" />
-      </div>
+      <Field label="Coefficient de vente" value={form.sale_coefficient} onChange={set("sale_coefficient")} error={errors.sale_coefficient} inputMode="decimal" suffix="×" />
       {msg && <Notice tone={msg.ok ? "ok" : "danger"}>{msg.text}</Notice>}
       <div className="flex flex-col gap-3 sm:flex-row">
         <Button
