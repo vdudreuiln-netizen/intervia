@@ -198,7 +198,7 @@ export function FluidPdf({ form, company, quoteNumber }: { form: FluidForm; comp
 // ---------------------------------------------------------------------------
 // Avenant au devis
 // ---------------------------------------------------------------------------
-export function AmendmentPdf({ amendment, company, client, quoteNumber, date, quoteTotalTtcCents }: { amendment: Amendment; company: PdfParty; client: PdfParty; quoteNumber: string; date: string; quoteTotalTtcCents: number }) {
+export function AmendmentPdf({ amendment, company, client, quoteNumber, date, quoteTotalTtcCents, priorAmendmentsTtcCents = 0 }: { amendment: Amendment; company: PdfParty; client: PdfParty; quoteNumber: string; date: string; quoteTotalTtcCents: number; priorAmendmentsTtcCents?: number }) {
   const qty = (n: number) => clean(n.toLocaleString("fr-FR", { maximumFractionDigits: 2 }));
   return (
     <Document title={`Avenant ${amendment.number} au devis ${quoteNumber}`} author={company.name} subject="Avenant au devis" language="fr-FR">
@@ -254,6 +254,12 @@ export function AmendmentPdf({ amendment, company, client, quoteNumber, date, qu
             <Text>Devis initial</Text>
             <Text>{pdfEuros(quoteTotalTtcCents)}</Text>
           </View>
+          {priorAmendmentsTtcCents > 0 && (
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text>Avenants précédents acceptés</Text>
+              <Text>{pdfEuros(priorAmendmentsTtcCents)}</Text>
+            </View>
+          )}
           <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
             <Text style={s.bold}>Nouveau montant du marché</Text>
             <Text style={s.bold}>{pdfEuros(amendment.newTotalTtcCents)}</Text>

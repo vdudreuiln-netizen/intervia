@@ -29,6 +29,8 @@ export type RuleId =
   | "source_chaleur"
   | "condensats"
   | "ue_acces"
+  | "support_fixation"
+  | "sol_degage"
   | "lit"
   | "soufflage_meubles"
   | "soufflage_longueur"
@@ -36,7 +38,6 @@ export type RuleId =
   | "ue_chambres"
   | "ue_voisins"
   | "liaison_courte"
-  | "mur_exterieur"
   | "gainable_reprise"
   | "gainable_bouches"
   | "donnees";
@@ -52,6 +53,8 @@ export const RULES: { id: RuleId; severity: Severity; label: string }[] = [
   { id: "source_chaleur", severity: "rouge", label: "Pas d'unité près d'une source de chaleur ou de flamme" },
   { id: "condensats", severity: "rouge", label: "Condensats évacuables (sinon pompe de relevage ajoutée)" },
   { id: "ue_acces", severity: "rouge", label: "Unité extérieure accessible pour l'entretien" },
+  { id: "support_fixation", severity: "rouge", label: "Support de fixation vérifié sur place (unité extérieure et unité murale)" },
+  { id: "sol_degage", severity: "rouge", label: "Sol dégagé devant l'unité extérieure vérifié sur place" },
   { id: "lit", severity: "orange", label: "Pas d'unité intérieure au-dessus d'un lit" },
   { id: "soufflage_meubles", severity: "orange", label: "Ne pas souffler directement sur un lit, un canapé ou un bureau" },
   { id: "soufflage_longueur", severity: "orange", label: "Souffler dans la plus grande longueur de la pièce" },
@@ -59,7 +62,6 @@ export const RULES: { id: RuleId; severity: Severity; label: string }[] = [
   { id: "ue_chambres", severity: "orange", label: "Unité extérieure loin des fenêtres des chambres" },
   { id: "ue_voisins", severity: "orange", label: "Unité extérieure loin des voisins" },
   { id: "liaison_courte", severity: "orange", label: "Liaisons les plus courtes possibles" },
-  { id: "mur_exterieur", severity: "orange", label: "Unité intérieure de préférence sur un mur extérieur" },
   { id: "gainable_reprise", severity: "orange", label: "Gainable : reprise centrale ou dans le couloir" },
   { id: "gainable_bouches", severity: "orange", label: "Gainable : bouches éloignées de la reprise" },
   { id: "donnees", severity: "orange", label: "Données fabricant manquantes (règle non vérifiable)" },
@@ -407,10 +409,7 @@ export function evaluateRules(ctx: RuleContext): Finding[] {
           if (along < max * 0.8) push({ ruleId: "soufflage_longueur", elementId: el, message: `${tag} souffle dans la largeur (${fmt(along * plan.mPerPx)} m) plutôt que dans la longueur (${fmt(max * plan.mPerPx)} m).` });
         }
       }
-      if (room) {
-        const e = nearestEdge(ui.marker, room.polygon);
-        if (edgeShared(e.a, e.b, room, plan.rooms, plan.mPerPx ? 0.4 / plan.mPerPx : 15)) push({ ruleId: "mur_exterieur", elementId: el, message: `${tag} est sur une cloison intérieure : un mur extérieur raccourcit les liaisons.` });
-      }
+      if (ind.product.type === "ui_murale" && !ui.marker.support) push({ ruleId: "support_fixation", elementId: el, message: `${tag} : choisissez le support vérifié sur place (mur plein, chevilles chimiques ou isolation par l'extérieur).` });
       if (ue && links.length && ue.plan === plan && plan.mPerPx) {
         const straight = dist(ui.marker, ue.marker) * plan.mPerPx;
         if (linkLen !== null && linkLen > straight * 1.5 + 2) push({ ruleId: "liaison_courte", elementId: el, message: `${tag} : liaison de ${fmt(linkLen)} m pour ${fmt(straight)} m à vol d'oiseau.` });
@@ -440,6 +439,8 @@ export function evaluateRules(ctx: RuleContext): Finding[] {
       if ((ue.marker.mount === "mural_haut" || ue.marker.mount === "toiture") && !ue.marker.confirmed?.includes("acces")) {
         push({ ruleId: "ue_acces", elementId: el, message: `${ueTag} posée ${ue.marker.mount === "toiture" ? "en toiture" : "en hauteur"} : confirmez un accès sûr pour l'entretien.` });
       }
+      if (!ue.marker.support) push({ ruleId: "support_fixation", elementId: el, message: `${ueTag} : choisissez le support vérifié sur place (mur plein, chevilles chimiques, isolation par l'extérieur, console au sol, toiture ou terrasse).` });
+      if (!ue.marker.confirmed?.includes("sol_degage")) push({ ruleId: "sol_degage", elementId: el, message: `${ueTag} : confirmez que le sol devant l'unité est dégagé (soufflage et entretien).` });
       const c = ueTech?.clearances ?? {};
       if (!ueTech || Object.keys(c).length === 0) push({ ruleId: "donnees", elementId: el, message: `${ueTag} : dégagements de la notice non renseignés (fiche produit).` });
       else if (!ue.marker.confirmed?.includes("degagements")) {

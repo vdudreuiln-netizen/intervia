@@ -211,6 +211,9 @@ export function buildLines(
       add("cable_liaison", `cablelia:${ind.key}`, group, linkM + 1);
       add("condensats", `condensats:${ind.key}`, group, linkM);
       add("pompe_relevage", `pompe:${ind.key}`, group, 1, { enabled: false });
+      const uiFix = m.fixation?.[ind.key];
+      if (uiFix === "chevilles_chimiques") add("fixation_chimique", `fixation_chimique:${ind.key}`, group, 1, { optional: false });
+      if (uiFix === "ite") add("fixation_ite", `fixation_ite:${ind.key}`, group, 1, { optional: false });
 
       if (isGainable) {
         const n = ind.roomIds.length;
@@ -233,8 +236,15 @@ export function buildLines(
     }
 
     // Accessoires de l'unité extérieure
-    add("support_mural", `support_mural:${sys.key}`, sysGroup, 1, { radioGroup: `support:${sys.key}`, enabled: true });
-    add("support_sol", `support_sol:${sys.key}`, sysGroup, 1, { radioGroup: `support:${sys.key}`, enabled: false });
+    const fix = m.fixation?.[sys.key];
+    if (fix === "toiture") {
+      add("support_toiture", `support_toiture:${sys.key}`, sysGroup, 1, { optional: false });
+    } else {
+      add("support_mural", `support_mural:${sys.key}`, sysGroup, 1, { radioGroup: `support:${sys.key}`, enabled: fix !== "console_sol" });
+      add("support_sol", `support_sol:${sys.key}`, sysGroup, 1, { radioGroup: `support:${sys.key}`, enabled: fix === "console_sol" });
+    }
+    if (fix === "chevilles_chimiques") add("fixation_chimique", `fixation_chimique:${sys.key}`, sysGroup, 1, { optional: false });
+    if (fix === "ite") add("fixation_ite", `fixation_ite:${sys.key}`, sysGroup, 1, { optional: false });
     add("cable_alim", `cable:${sys.key}`, sysGroup, m.electricM[sys.key] ?? s.defaultElectricM);
     add("disjoncteur", `disj:${sys.key}`, sysGroup, 1);
 

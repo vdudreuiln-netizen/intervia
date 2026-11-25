@@ -11,6 +11,20 @@ import { polylineLength, type Pt } from "./geometry";
 
 export type MarkerKind = "ui" | "ue" | "bouche" | "grille" | "tableau" | "evacuation" | "chaleur" | "lit" | "canape" | "bureau" | "rue" | "voisin";
 export type UeMount = "sol" | "mural_bas" | "mural_haut" | "toiture";
+/** Support de fixation vérifié sur place (obligatoire pour l'UE et l'UI murale). */
+export type SupportKind = "mur_plein" | "chevilles_chimiques" | "ite" | "console_sol" | "toiture";
+export const SUPPORT_LABELS: Record<SupportKind, string> = {
+  mur_plein: "Mur plein (fixation standard)",
+  chevilles_chimiques: "Mur creux ou fragile : chevilles chimiques",
+  ite: "Isolation par l'extérieur : fixation spéciale",
+  console_sol: "Console au sol",
+  toiture: "Support toiture ou terrasse",
+};
+/** Supports possibles : UE (tous) ; UI murale (fixations murales seulement). */
+export const SUPPORTS_UE: SupportKind[] = ["mur_plein", "chevilles_chimiques", "ite", "console_sol", "toiture"];
+export const SUPPORTS_UI: SupportKind[] = ["mur_plein", "chevilles_chimiques", "ite"];
+const SUPPORT_SET = new Set<string>(SUPPORTS_UE);
+
 export type RouteKind = "liaison" | "condensats" | "goulotte" | "electrique" | "gaine";
 
 export interface Marker {
@@ -32,7 +46,9 @@ export interface Marker {
   mount?: UeMount;
   /** Évacuation : hauteur de l'entrée d'eau au-dessus du sol, en m. */
   heightM?: number;
-  /** Points vérifiés sur place (« degagements », « acces »…). */
+  /** Support de fixation vérifié sur place. */
+  support?: SupportKind;
+  /** Points vérifiés sur place (« degagements », « acces », « sol_degage »…). */
   confirmed?: string[];
 }
 
@@ -157,8 +173,20 @@ export function metreFromLayouts(plans: PlanLayout[], eq: Equipment, base: Metre
     }
     for (const m of p.layout.markers) if ((m.kind === "bouche" || m.kind === "grille") && m.equipmentKey) counts.set(`${m.kind}:${m.equipmentKey}`, (counts.get(`${m.kind}:${m.equipmentKey}`) ?? 0) + 1);
   }
-  const metre: Metre = { ...base, linkM: { ...base.linkM }, electricM: { ...base.electricM }, ductMPerRoom: { ...base.ductMPerRoom }, toggles: { ...base.toggles }, qty: { ...base.qty } };
+  const metre: Metre = { ...base, linkM: { ...base.linkM }, electricM: { ...base.electricM }, ductMPerRoom: { ...base.ductMPerRoom }, toggles: { ...base.toggles }, qty: { ...base.qty }, fixation: { ...(base.fixation ?? {}) } };
   const report: MetreReportLine[] = [];
+  // Support de fixation vérifié → lignes de fourniture du devis
+  for (const p of plans) {
+    for (const mk of p.layout.markers) {
+      if ((mk.kind !== "ue" && mk.kind !== "ui") || !mk.equipmentKey || !mk.support) continue;
+      metre.fixation![mk.equipmentKey] = mk.support;
+      if (mk.kind === "ue") {
+        // le choix du support remplace le choix mural / sol de l'assistant
+        metre.toggles[`support_mural:${mk.equipmentKey}`] = mk.support === "mur_plein" || mk.support === "chevilles_chimiques" || mk.support === "ite";
+        metre.toggles[`support_sol:${mk.equipmentKey}`] = mk.support === "console_sol";
+      }
+    }
+  }
   for (const sys of eq.systems) {
     const e = sums.get(`electrique:${sys.key}`);
     if (e !== undefined) {
@@ -242,6 +270,7 @@ export function sanitizeLayout(raw: unknown, size: { width: number; height: numb
         if (typeof m.mount === "string" && mounts.has(m.mount)) out.mount = m.mount;
         const h = num(m.heightM, 0, 10);
         if (h !== undefined) out.heightM = h;
+        if (typeof m.support === "string" && SUPPORT_SET.has(m.support)) out.support = m.support as SupportKind;
         if (Array.isArray(m.confirmed)) out.confirmed = m.confirmed.filter((c): c is string => typeof c === "string").slice(0, 10).map((c) => c.slice(0, 40));
         return out;
       }),

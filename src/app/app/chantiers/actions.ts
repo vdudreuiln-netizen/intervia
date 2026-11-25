@@ -1,11 +1,12 @@
 "use server";
 
+import { LOSS_MESSAGE, sellsAtLoss } from "@/lib/quote/edits";
 import { revalidatePath } from "next/cache";
 import { readOnlyError } from "@/lib/billing/guard";
 import { loadQuote } from "@/lib/quote/load";
 import { costAccess } from "@/lib/security/costs";
-import { computeDeviation } from "@/lib/site/load.server";
-import { validateReception, type Checks, type DeviationKind, type Values } from "@/lib/site/site";
+import { computeDeviation, pricingSettingsOf } from "@/lib/site/load.server";
+import { buildAmendment, validateReception, type Checks, type DevLine, type DeviationKind, type Values } from "@/lib/site/site";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FAIL = "Enregistrement impossible. Réessayez.";
@@ -113,6 +114,7 @@ export async function priceDeviation(quoteId: string, deviationId: string, saleC
   const c = await adminCtx(quoteId);
   if ("error" in c) return c.error!;
   if (!UUID.test(deviationId) || !Number.isInteger(saleCents) || !Number.isInteger(purchaseCents) || saleCents < 0 || purchaseCents < 0 || saleCents > 10_000_000) return { ok: false, message: "Montants invalides." };
+  if (sellsAtLoss(saleCents, purchaseCents)) return { ok: false, message: LOSS_MESSAGE };
   const { data: d } = await c.a.supabase.from("site_deviations").select("kind, equipment_key, quantity, accessory_id, description").eq("quote_id", quoteId).eq("id", deviationId).maybeSingle();
   if (!d) return { ok: false, message: "Écart introuvable." };
   const costs = await computeDeviation(c.a.supabase, c.a.db, c.a.company, c.q, { kind: d.kind, equipmentKey: d.equipment_key, quantity: 1, accessoryId: null, description: d.description }, { saleCents, purchaseCents });
@@ -123,30 +125,67 @@ export async function priceDeviation(quoteId: string, deviationId: string, saleC
 }
 
 /**
- * Décision de l'administrateur :
- *  - « avenant » : les écarts choisis forment le prochain avenant (brouillon PDF prêt à envoyer) ;
- *  - « accepte » / « refuse » : réponse du client à l'avenant ;
- *  - « absorbe » : l'entreprise prend le surcoût à sa charge.
+ * Décision de l'administrateur sur des écarts en attente :
+ *  - « avenant » : ils forment le prochain avenant ; son montant (prix de vente)
+ *    est figé et enregistré, puis le brouillon PDF est prêt à envoyer ;
+ *  - « absorbe » : l'entreprise prend le surcoût à sa charge ;
+ *  - « en_attente » : retour en attente (écarts absorbés).
  */
-export async function decideDeviations(quoteId: string, ids: string[], decision: "avenant" | "accepte" | "refuse" | "absorbe" | "en_attente"): Promise<Result & { amendment?: number }> {
+export async function decideDeviations(quoteId: string, ids: string[], decision: "avenant" | "absorbe" | "en_attente"): Promise<Result & { amendment?: number }> {
   const c = await adminCtx(quoteId);
   if ("error" in c) return c.error!;
   const list = ids.filter((i) => UUID.test(i)).slice(0, 50);
   if (list.length === 0) return { ok: false, message: "Choisissez au moins un écart." };
   const base = { decided_by: c.a.user.id, decided_at: new Date().toISOString() };
-  let amendment: number | undefined;
-  let patch: Record<string, unknown>;
-  if (decision === "avenant") {
-    const { data } = await c.a.supabase.from("site_deviations").select("amendment_number").eq("quote_id", quoteId).not("amendment_number", "is", null).order("amendment_number", { ascending: false }).limit(1);
-    amendment = (data?.[0]?.amendment_number ?? 0) + 1;
-    patch = { ...base, status: "avenant_envoye", amendment_number: amendment };
-  } else if (decision === "en_attente") patch = { ...base, status: "en_attente", amendment_number: null };
-  else if (decision === "absorbe") patch = { ...base, status: "absorbe", amendment_number: null };
-  else patch = { ...base, status: decision };
-  const { error } = await c.a.supabase.from("site_deviations").update(patch).eq("quote_id", quoteId).in("id", list);
+  if (decision !== "avenant") {
+    const from = decision === "absorbe" ? ["en_attente"] : ["absorbe", "refuse"];
+    const { error } = await c.a.supabase.from("site_deviations").update({ ...base, status: decision, amendment_number: null }).eq("quote_id", quoteId).in("id", list).in("status", from);
+    if (error) return { ok: false, message: FAIL };
+    done(quoteId);
+    return { ok: true, message: "Décision enregistrée ✔" };
+  }
+  const { data: devs } = await c.a.supabase.from("site_deviations").select("id, description").eq("quote_id", quoteId).eq("status", "en_attente").in("id", list).order("created_at");
+  if (!devs?.length) return { ok: false, message: "Ces écarts ne sont plus en attente." };
+  const { data: costs } = await c.a.db.from("site_deviation_costs").select("deviation_id, lines").eq("company_id", c.a.companyId).in("deviation_id", devs.map((d) => d.id));
+  const linesOf = new Map((costs ?? []).map((x) => [x.deviation_id as string, (x.lines as DevLine[]) ?? []]));
+  const unpriced = devs.filter((d) => (linesOf.get(d.id) ?? []).length === 0);
+  if (unpriced.length) return { ok: false, message: `Chiffrez d'abord : ${unpriced.map((d) => d.description).join(", ")}.` };
+  const atLoss = devs.flatMap((d) => (linesOf.get(d.id) ?? []).filter((l) => l.unitSaleCents < l.unitPurchaseCents).map((l) => l.designation));
+  if (atLoss.length) return { ok: false, message: `Vente à perte impossible : ${atLoss.join(", ")}.` };
+  const { data: last } = await c.a.supabase.from("quote_amendments").select("number").eq("quote_id", quoteId).order("number", { ascending: false }).limit(1);
+  const number = (last?.[0]?.number ?? 0) + 1;
+  const { data: tot } = await c.a.supabase.from("quotes").select("total_ttc_cents").eq("id", quoteId).single();
+  const amendment = buildAmendment(number, devs.map((d) => ({ description: d.description, lines: linesOf.get(d.id)! })), pricingSettingsOf(c.a.company, c.q.vatRegime), Number(tot?.total_ttc_cents ?? 0));
+  const ins = await c.a.supabase.from("quote_amendments").insert({ company_id: c.a.companyId, quote_id: quoteId, number, status: "envoye", total_ht_cents: amendment.totalHtCents, total_ttc_cents: amendment.totalTtcCents });
+  if (ins.error) return { ok: false, message: FAIL };
+  const { error } = await c.a.supabase.from("site_deviations").update({ ...base, status: "avenant_envoye", amendment_number: number }).eq("quote_id", quoteId).in("id", devs.map((d) => d.id));
   if (error) return { ok: false, message: FAIL };
   done(quoteId);
-  return { ok: true, amendment, message: decision === "avenant" ? `Avenant n° ${amendment} prêt : ouvrez le PDF et envoyez-le au client.` : "Décision enregistrée ✔" };
+  revalidatePath("/app");
+  return { ok: true, amendment: number, message: `Avenant n° ${number} prêt (${(amendment.totalTtcCents / 100).toLocaleString("fr-FR", { style: "currency", currency: "EUR" })}) : ouvrez le PDF et envoyez-le au client.` };
+}
+
+/** Réponse du client à un avenant entier ; « annule » remet ses écarts en attente (avenant non accepté). */
+export async function decideAmendment(quoteId: string, number: number, decision: "accepte" | "refuse" | "annule"): Promise<Result> {
+  const c = await adminCtx(quoteId);
+  if ("error" in c) return c.error!;
+  if (!Number.isInteger(number) || number < 1 || number > 99) return { ok: false, message: "Avenant introuvable." };
+  const { data: am } = await c.a.supabase.from("quote_amendments").select("id, status").eq("quote_id", quoteId).eq("number", number).maybeSingle();
+  if (!am) return { ok: false, message: "Avenant introuvable." };
+  const now = new Date().toISOString();
+  if (decision === "annule") {
+    if (am.status === "accepte") return { ok: false, message: "Avenant déjà accepté par le client : il ne peut plus être annulé." };
+    await c.a.supabase.from("site_deviations").update({ status: "en_attente", amendment_number: null, decided_by: c.a.user.id, decided_at: now }).eq("quote_id", quoteId).eq("amendment_number", number);
+    const { error } = await c.a.supabase.from("quote_amendments").delete().eq("id", am.id);
+    if (error) return { ok: false, message: FAIL };
+  } else {
+    const { error } = await c.a.supabase.from("quote_amendments").update({ status: decision, decided_at: now }).eq("id", am.id);
+    if (error) return { ok: false, message: FAIL };
+    await c.a.supabase.from("site_deviations").update({ status: decision, decided_by: c.a.user.id, decided_at: now }).eq("quote_id", quoteId).eq("amendment_number", number);
+  }
+  done(quoteId);
+  revalidatePath("/app");
+  return { ok: true, message: decision === "accepte" ? `Avenant n° ${number} accepté ✔ Compté dans le chiffre d'affaires.` : decision === "refuse" ? `Avenant n° ${number} refusé.` : `Avenant n° ${number} annulé : écarts remis en attente.` };
 }
 
 /** 4. Relevés de mise en service (fusionnés avec ceux déjà saisis). */

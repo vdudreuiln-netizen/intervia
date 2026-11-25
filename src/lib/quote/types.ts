@@ -36,7 +36,10 @@ export type AutoRole =
   | "grille_reprise"
   | "registre_zonage"
   | "thermostat_zone"
-  | "module_zonage";
+  | "module_zonage"
+  | "fixation_chimique"
+  | "fixation_ite"
+  | "support_toiture";
 
 export const AUTO_ROLE_LABELS: Record<AutoRole, string> = {
   liaison: "Liaison frigorifique (choisie selon le diamètre)",
@@ -56,6 +59,9 @@ export const AUTO_ROLE_LABELS: Record<AutoRole, string> = {
   registre_zonage: "Zonage : registre motorisé",
   thermostat_zone: "Zonage : thermostat de pièce",
   module_zonage: "Zonage : module de régulation",
+  fixation_chimique: "Fixation par chevilles chimiques (mur creux ou fragile)",
+  fixation_ite: "Fixation spéciale isolation par l'extérieur",
+  support_toiture: "Support toiture ou terrasse d'unité extérieure",
 };
 
 /** Produit du catalogue tel qu'utilisé par l'assistant. */
@@ -140,6 +146,8 @@ export interface Metre {
   toggles: Record<string, boolean>;
   /** Quantités forcées par l'artisan. */
   qty: Record<string, number>;
+  /** Support de fixation vérifié sur le plan, par équipement (clé UE = système, clé UI = unité intérieure). */
+  fixation?: Record<string, "mur_plein" | "chevilles_chimiques" | "ite" | "console_sol" | "toiture">;
 }
 
 export const EMPTY_METRE: Metre = { linkM: {}, electricM: {}, ductMPerRoom: {}, toggles: {}, qty: {} };

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button, Card, Choice, Field, LinkButton, MoneyField, Notice, Select } from "@/components/ui";
 import { centsToInput, decimalToInput, formatEuros, formatPercent, parseDecimal, parseEuros, parsePercent } from "@/lib/format";
 import { computeQuote, maxDiscount, type PricingSettings, type QuoteAlert, type QuoteDiscount, type PricedLine } from "@/lib/pricing/engine";
-import type { FreeLineForm } from "@/lib/quote/edits";
+import { LOSS_MESSAGE, sellsAtLoss, type FreeLineForm } from "@/lib/quote/edits";
 import type { QuoteLineRow } from "@/lib/quote/load";
 import { addFreeLine, deleteLine, dismissPriceNotices, roundQuote, setDiscount, setQuoteCoefficients, updateLine, type DocumentOptions } from "../../actions";
 import type { WizardState } from "@/lib/quote/types";
@@ -136,7 +136,7 @@ export function QuoteEditor({
             <LineItem key={l.id} line={{ ...l, belowCost: belowCost.has(l.id) }} row={rows.find((r) => r.id === l.id)!} assujetti={assujetti} pending={pending} run={run} quoteId={quoteId} showMargin={showMargin} />
           ))}
         </ul>
-        <Totals result={result} />
+        <Totals result={result} showMargin={showMargin} />
       </Card>
 
       <Rounding pending={pending} onRound={() => run(() => roundQuote(quoteId))} />
@@ -176,16 +176,22 @@ function LineItem({ line: l, row, assujetti, pending, run, quoteId, showMargin }
             {assujetti && ` · TVA ${formatPercent(l.vatRate)}`}
             {showMargin && ` · achat ${formatEuros(l.unitPurchaseCents)}`}
           </p>
+          {showMargin && l.quantity > 0 && (
+            <p className={`text-sm font-semibold ${l.contributionCents < 0 ? "text-danger" : "text-emerald-800"}`}>
+              Marge de la ligne : {formatEuros(l.netSaleCents - l.totalPurchaseCents)}
+              {l.netSaleCents > 0 && ` (${formatPercent((l.netSaleCents - l.totalPurchaseCents) / l.netSaleCents)})`} · après charges {formatEuros(l.contributionCents)}
+            </p>
+          )}
           {l.belowCost && <p className="text-sm font-bold text-danger">⚠ Sous le coût de revient</p>}
         </div>
         <p className="shrink-0 text-base font-bold">{formatEuros(l.totalSaleCents)}</p>
       </div>
       {editing ? (
         <div className="mt-3 space-y-3 rounded-xl bg-slate-100 p-3">
-          <MoneyField label="Prix de vente unitaire HT" value={price} onChange={setPrice} error={cents === null ? "Prix invalide" : undefined} />
+          <MoneyField label="Prix de vente unitaire HT" value={price} onChange={setPrice} error={cents === null ? "Prix invalide" : showMargin && sellsAtLoss(cents, l.unitPurchaseCents) ? LOSS_MESSAGE : undefined} />
           {assujetti && <Select label="TVA de la ligne" value={vat} onChange={setVat} options={VAT_OPTIONS} />}
           <div className="flex gap-3">
-            <Button type="button" disabled={pending || cents === null} onClick={() => run(() => updateLine(quoteId, l.id, { unitSaleCents: cents!, vatRate: Number(vat) }), "Ligne modifiée ✔")}>
+            <Button type="button" disabled={pending || cents === null || (showMargin && sellsAtLoss(cents, l.unitPurchaseCents))} onClick={() => run(() => updateLine(quoteId, l.id, { unitSaleCents: cents!, vatRate: Number(vat) }), "Ligne modifiée ✔")}>
               Enregistrer
             </Button>
             <Button type="button" variant="secondary" onClick={() => setEditing(false)}>
@@ -212,7 +218,8 @@ function LineItem({ line: l, row, assujetti, pending, run, quoteId, showMargin }
   );
 }
 
-function Totals({ result }: { result: ReturnType<typeof computeQuote> }) {
+function Totals({ result, showMargin }: { result: ReturnType<typeof computeQuote>; showMargin: boolean }) {
+  const gross = result.totalHtCents - result.margin.purchaseCostCents;
   return (
     <dl className="space-y-1 border-t-4 border-slate-300 pt-3 text-lg">
       {result.discountCents > 0 && (
@@ -243,6 +250,23 @@ function Totals({ result }: { result: ReturnType<typeof computeQuote> }) {
         <div className="flex justify-between text-xl">
           <dt className="font-bold">Total TTC</dt>
           <dd className="font-extrabold">{formatEuros(result.totalTtcCents)}</dd>
+        </div>
+      )}
+      {showMargin && (
+        <div className="mt-2 space-y-1 rounded-lg bg-slate-100 p-2 text-base">
+          <div className="flex justify-between">
+            <dt>Marge brute du devis (vente HT − achats)</dt>
+            <dd className={`font-bold ${gross < 0 ? "text-danger" : ""}`}>
+              {formatEuros(gross)}
+              {result.totalHtCents > 0 && ` (${formatPercent(gross / result.totalHtCents)})`}
+            </dd>
+          </div>
+          <div className="flex justify-between">
+            <dt>Marge nette (après charges et port)</dt>
+            <dd className={`font-bold ${result.margin.netMarginCents < 0 ? "text-danger" : ""}`}>
+              {formatEuros(result.margin.netMarginCents)} ({formatPercent(result.margin.netMarginRate)})
+            </dd>
+          </div>
         </div>
       )}
     </dl>

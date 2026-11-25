@@ -32,6 +32,19 @@ export function recordRemoval(edits: QuoteEdits | undefined, key: string): Quote
   return { overrides, removed: e.removed.includes(key) ? e.removed : [...e.removed, key] };
 }
 
+/** Message unique : aucune ligne ne peut être vendue sous son prix d'achat. */
+export const LOSS_MESSAGE = "Prix de vente inférieur au coût : aucune ligne ne peut être vendue à perte.";
+
+/** Vente à perte : prix de vente unitaire HT (après remise éventuelle) sous le coût d'achat unitaire. */
+export function sellsAtLoss(unitSaleCents: number, unitPurchaseCents: number): boolean {
+  return unitSaleCents < unitPurchaseCents;
+}
+
+/** Lignes vendues à perte d'un devis chiffré (vente nette après remise < achat). */
+export function lossLines<T extends { quantity: number; netSaleCents: number; totalPurchaseCents: number }>(lines: T[]): T[] {
+  return lines.filter((l) => l.quantity > 0 && l.netSaleCents < l.totalPurchaseCents);
+}
+
 export type FreeLineKind = "material" | "other";
 
 export interface FreeLineForm {
@@ -63,6 +76,7 @@ export function parseFreeLine(f: FreeLineForm, vatRegime: "franchise" | "assujet
   if (purchase === null || purchase < 0) errors.purchase = "Prix d'achat invalide (0 si aucun)";
   const sale = parse.euros(f.sale);
   if (sale === null || sale < 0) errors.sale = "Prix de vente HT invalide";
+  if (purchase !== null && sale !== null && purchase >= 0 && sale >= 0 && sellsAtLoss(sale, purchase)) errors.sale = LOSS_MESSAGE;
   let vat = 0;
   if (vatRegime === "assujetti") {
     const v = parse.percent(f.vatRate || "10");

@@ -9,7 +9,7 @@ import { isSameCommune } from "@/lib/geo/adresse";
 import { roadDistance } from "@/lib/geo/route";
 import { computeQuote, roundToPsychologicalPrice, type QuoteDiscount } from "@/lib/pricing/engine";
 import { parseDecimal, parseEuros, parsePercent } from "@/lib/format";
-import { applyEdits, parseFreeLine, recordOverride, recordRemoval, type FreeLineForm } from "@/lib/quote/edits";
+import { applyEdits, LOSS_MESSAGE, lossLines, parseFreeLine, sellsAtLoss, recordOverride, recordRemoval, type FreeLineForm } from "@/lib/quote/edits";
 import { documentWarnings, validateSchedule } from "@/lib/pdf/document";
 import { priceNotices, remapIds } from "@/lib/quote/duplicate";
 import { parseClientSite, type ClientSiteErrors, type ClientSiteForm } from "@/lib/quote/client";
@@ -269,12 +269,24 @@ async function lineContext(quoteId: string, lineId: string) {
   return line ? { supabase, q, line, db, companyId } : null;
 }
 
+/** Lignes qui seraient vendues à perte avec cette remise (prix nets fournisseurs). */
+async function lossWith(quoteId: string, discount: QuoteDiscount | null | undefined) {
+  const { supabase, company } = await getCurrentCompany();
+  const q = await loadQuote(supabase, quoteId);
+  if (!q) return [];
+  const { db } = await costDb();
+  const plan = await applySupplierPlan(db, company.id, quoteId, q.vatRegime, company.default_vat_rate);
+  const r = computeQuote({ lines: plan.lines, laborDays: q.laborDays, discount: discount === undefined ? q.discount : discount, settings: pricingSettings(company, q.vatRegime), shippingCostCents: internalShipping(plan.settings) });
+  return lossLines(r.lines);
+}
+
 /** Modifier le prix de vente (et la TVA) d'une ligne. */
 export async function updateLine(quoteId: string, lineId: string, patch: { unitSaleCents: number; vatRate?: number }): Promise<{ ok: boolean; message?: string }> {
   { const g = await readOnlyError(); if (g) return g as never; }
   const c = await lineContext(quoteId, lineId);
   if (!c) return { ok: false, message: "Ligne introuvable." };
   if (!Number.isInteger(patch.unitSaleCents) || patch.unitSaleCents < 0 || patch.unitSaleCents > 100_000_000) return { ok: false, message: "Prix invalide." };
+  if (sellsAtLoss(patch.unitSaleCents, c.line.unitPurchaseCents)) return { ok: false, message: LOSS_MESSAGE };
   const vat = c.q.vatRegime === "franchise" ? 0 : patch.vatRate ?? c.line.vatRate;
   if (c.q.vatRegime === "assujetti" && ![0.055, 0.1, 0.2].includes(vat)) return { ok: false, message: "TVA : 5,5 %, 10 % ou 20 %." };
   const { error } = await c.db.from("quote_lines").update({ unit_sale_cents: patch.unitSaleCents, vat_rate: vat }).eq("company_id", c.companyId).eq("id", lineId);
@@ -331,6 +343,7 @@ export async function setDiscount(quoteId: string, discount: QuoteDiscount | nul
   { const g = await readOnlyError(); if (g) return g as never; }
   const { supabase } = await getCurrentCompany();
   if (discount && (!(discount.value >= 0) || (discount.kind === "percent" && discount.value >= 1))) return { ok: false, message: "Remise invalide." };
+  if (discount && discount.value > 0 && (await lossWith(quoteId, discount)).length > 0) return { ok: false, message: "Remise trop forte : " + LOSS_MESSAGE.charAt(0).toLowerCase() + LOSS_MESSAGE.slice(1) };
   const { error } = await supabase
     .from("quotes")
     .update(discount && discount.value > 0 ? { discount_kind: discount.kind, discount_value: discount.value } : { discount_kind: null, discount_value: null })
@@ -383,9 +396,21 @@ export async function roundQuote(quoteId: string): Promise<{ ok: boolean; messag
 export async function setQuoteCoefficients(quoteId: string, material: number | null, accessory: number | null): Promise<{ ok: boolean; message?: string }> {
   { const g = await readOnlyError(); if (g) return g as never; }
   for (const c of [material, accessory]) if (c !== null && !(c > 0 && c <= 5)) return { ok: false, message: "Coefficient entre 0,01 et 5." };
+  const { supabase } = await getCurrentCompany();
+  const before = await loadQuote(supabase, quoteId);
+  if (!before) return { ok: false, message: "Devis introuvable." };
   const s = await saveWizard(quoteId, { materialCoefficient: material, accessoryCoefficient: accessory });
   if (!s.ok) return s;
-  return finalizeQuote(quoteId, "keep");
+  const f = await finalizeQuote(quoteId, "keep");
+  if (!f.ok) return f;
+  // Coefficient trop bas = vente à perte : on revient aux coefficients précédents
+  const loss = await lossWith(quoteId, undefined);
+  if (loss.length > 0) {
+    await saveWizard(quoteId, { materialCoefficient: before.wizard.materialCoefficient ?? null, accessoryCoefficient: before.wizard.accessoryCoefficient ?? null });
+    await finalizeQuote(quoteId, "keep");
+    return { ok: false, message: `Coefficient trop bas (« ${loss[0]!.designation} ») : ${LOSS_MESSAGE.charAt(0).toLowerCase()}${LOSS_MESSAGE.slice(1)} Coefficients précédents conservés.` };
+  }
+  return f;
 }
 
 // ---------------------------------------------------------------------------

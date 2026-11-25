@@ -23,7 +23,7 @@ import {
 } from "@/lib/site/site";
 import { canvasToJpeg, imageFileToCanvas } from "../../devis/[id]/plan/PlanUpload";
 import { PlanCanvas, unit } from "../../devis/[id]/plan/PlanCanvas";
-import { addPhoto, decideDeviations, deletePhoto, priceDeviation, reportDeviation, saveCommissioning, saveReception, setCheck } from "../actions";
+import { addPhoto, decideAmendment, decideDeviations, deletePhoto, priceDeviation, reportDeviation, saveCommissioning, saveReception, setCheck } from "../actions";
 
 export interface PlanView {
   level: number;
@@ -50,7 +50,13 @@ export interface DeviationView {
   status: DeviationStatus;
   amendment: number | null;
   createdAt: string;
-  costs: { priced: boolean; extraPurchaseCents: number; extraSaleCents: number; marginIfBilledCents: number; marginIfAbsorbedCents: number } | null;
+  costs: { priced: boolean; extraPurchaseCents: number; extraSaleCents: number; marginIfBilledCents: number; marginIfAbsorbedCents: number; lines: { designation: string; quantity: number; unit: string; unitPurchaseCents: number; unitSaleCents: number }[] } | null;
+}
+export interface AmendmentView {
+  number: number;
+  status: "envoye" | "accepte" | "refuse";
+  totalHtCents: number;
+  totalTtcCents: number;
 }
 
 interface Props {
@@ -62,6 +68,8 @@ interface Props {
   checks: Checks;
   photos: PhotoView[];
   deviations: DeviationView[];
+  amendments: AmendmentView[];
+  quoteTotals: { htCents: number; ttcCents: number };
   indoors: { key: string; label: string }[];
   accessories: { id: string; label: string }[];
   sections: CommissioningSection[];
@@ -255,7 +263,7 @@ function Photos({ quoteId, companyId, items, photos, busy, run, setMsg }: Sub & 
 // ---------------------------------------------------------------------------
 // 3. Écarts avec le prévu
 // ---------------------------------------------------------------------------
-function Deviations({ quoteId, deviations, indoors, accessories, isAdmin, showCosts, busy, run }: Sub) {
+function Deviations({ quoteId, deviations, amendments, quoteTotals, indoors, accessories, isAdmin, showCosts, busy, run }: Sub) {
   const [kind, setKind] = useState<DeviationKind>("longueur");
   const [key, setKey] = useState(indoors[0]?.key ?? "");
   const [qty, setQty] = useState("");
@@ -267,7 +275,6 @@ function Deviations({ quoteId, deviations, indoors, accessories, isAdmin, showCo
   const needsQty = kind !== "pompe" && kind !== "autre";
   const auto = kind === "longueur" ? `Liaison ${qty || "?"} m plus longue (${indoors.find((i) => i.key === key)?.label.split(" – ")[0] ?? ""})` : kind === "pompe" ? `Pompe de relevage nécessaire (${indoors.find((i) => i.key === key)?.label.split(" – ")[0] ?? ""})` : "";
   const pendingList = deviations.filter((d) => d.status === "en_attente");
-  const amendments = [...new Set(deviations.flatMap((d) => (d.amendment ? [d.amendment] : [])))].sort();
   const euro = (c: number) => `${c > 0 ? "+" : ""}${formatEuros(c)}`;
   return (
     <div className="space-y-5">
@@ -310,6 +317,34 @@ function Deviations({ quoteId, deviations, indoors, accessories, isAdmin, showCo
                     <dd className="text-right font-bold text-danger">{euro(d.costs.marginIfAbsorbedCents)}</dd>
                   </dl>
                 )}
+                {showCosts && d.costs?.priced && (
+                  <table className="mt-2 w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-slate-600">
+                        <th className="font-semibold">Ligne</th>
+                        <th className="text-right font-semibold">Vente</th>
+                        <th className="text-right font-semibold">Coût</th>
+                        <th className="text-right font-semibold">Marge</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.costs.lines.map((l, i) => {
+                        const sale = Math.round(l.quantity * l.unitSaleCents);
+                        const cost = Math.round(l.quantity * l.unitPurchaseCents);
+                        return (
+                          <tr key={i} className="border-t border-slate-200">
+                            <td>
+                              {l.designation} × {l.quantity.toLocaleString("fr-FR")} {l.unit}
+                            </td>
+                            <td className="text-right">{formatEuros(sale)}</td>
+                            <td className="text-right">{formatEuros(cost)}</td>
+                            <td className={`text-right font-bold ${sale - cost < 0 ? "text-danger" : "text-ok"}`}>{formatEuros(sale - cost)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
                 {isAdmin && d.status === "en_attente" && !d.costs?.priced && (
                   <div className="mt-2 grid grid-cols-[1fr_1fr_auto] items-end gap-2">
                     <MoneyField label="Prix HT" value={price[d.id]?.sale ?? ""} onChange={(v) => setPrice({ ...price, [d.id]: { sale: v, cost: price[d.id]?.cost ?? "" } })} />
@@ -319,17 +354,7 @@ function Deviations({ quoteId, deviations, indoors, accessories, isAdmin, showCo
                     </Button>
                   </div>
                 )}
-                {isAdmin && d.status === "avenant_envoye" && (
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <Button type="button" disabled={busy} onClick={() => run(() => decideDeviations(quoteId, [d.id], "accepte"))}>
-                      Accepté par le client
-                    </Button>
-                    <Button type="button" variant="secondary" disabled={busy} onClick={() => run(() => decideDeviations(quoteId, [d.id], "refuse"))}>
-                      Refusé
-                    </Button>
-                  </div>
-                )}
-                {isAdmin && d.status !== "en_attente" && (
+                {isAdmin && (d.status === "absorbe" || d.status === "refuse") && (
                   <button type="button" className="mt-2 text-sm font-bold text-brand underline" disabled={busy} onClick={() => run(() => decideDeviations(quoteId, [d.id], "en_attente"))}>
                     Remettre en attente
                   </button>
@@ -347,11 +372,45 @@ function Deviations({ quoteId, deviations, indoors, accessories, isAdmin, showCo
               </Button>
             </div>
           )}
-          {amendments.map((n) => (
-            <a key={n} href={`/app/chantiers/${quoteId}/avenant/${n}`} target="_blank" rel="noopener" className="flex min-h-12 items-center justify-center rounded-xl border-2 border-brand bg-white px-4 text-base font-bold text-brand">
-              Avenant n° {n} (PDF à envoyer au client)
-            </a>
-          ))}
+        </Card>
+      )}
+
+      {amendments.length > 0 && (
+        <Card title="Avenants">
+          <dl className="grid grid-cols-2 gap-y-1 text-base">
+            <dt>Montant initial du devis</dt>
+            <dd className="text-right font-bold">{formatEuros(quoteTotals.htCents)} HT</dd>
+            <dt>Avenants acceptés</dt>
+            <dd className="text-right font-bold">{formatEuros(amendments.filter((a) => a.status === "accepte").reduce((n, a) => n + a.totalHtCents, 0))} HT</dd>
+            <dt className="font-bold">Total du marché</dt>
+            <dd className="text-right text-lg font-extrabold">{formatEuros(quoteTotals.htCents + amendments.filter((a) => a.status === "accepte").reduce((n, a) => n + a.totalHtCents, 0))} HT</dd>
+          </dl>
+          <ul className="space-y-3">
+            {amendments.map((a) => (
+              <li key={a.number} className="rounded-xl border-2 border-slate-300 p-3">
+                <p className="text-base">
+                  <strong>Avenant n° {a.number}</strong> · {formatEuros(a.totalHtCents)} HT ({formatEuros(a.totalTtcCents)} TTC) ·{" "}
+                  <span className={a.status === "accepte" ? "font-bold text-ok" : a.status === "refuse" ? "font-bold text-danger" : ""}>{a.status === "envoye" ? "envoyé, en attente de réponse" : a.status === "accepte" ? "accepté" : "refusé"}</span>
+                </p>
+                <a href={`/app/chantiers/${quoteId}/avenant/${a.number}`} target="_blank" rel="noopener" className="mt-2 flex min-h-12 items-center justify-center rounded-xl border-2 border-brand bg-white px-4 text-base font-bold text-brand">
+                  PDF de l&apos;avenant
+                </a>
+                {isAdmin && a.status === "envoye" && (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <Button type="button" disabled={busy} onClick={() => run(() => decideAmendment(quoteId, a.number, "accepte"))}>
+                      Accepté par le client
+                    </Button>
+                    <Button type="button" variant="secondary" disabled={busy} onClick={() => run(() => decideAmendment(quoteId, a.number, "refuse"))}>
+                      Refusé
+                    </Button>
+                    <button type="button" className="col-span-2 text-sm font-bold text-brand underline" disabled={busy} onClick={() => confirm("Annuler cet avenant et remettre ses écarts en attente ?") && run(() => decideAmendment(quoteId, a.number, "annule"))}>
+                      Annuler l&apos;avenant
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
     </div>

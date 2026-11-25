@@ -5,7 +5,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Choice, Field, LinkButton, Notice } from "@/components/ui";
 import { formatEuros, formatPercent } from "@/lib/format";
-import { dashboard, followUpMessage, monthLabel, needsFollowUp, type QuoteStatus, type QuoteSummary } from "@/lib/dashboard/stats";
+import { dashboard, followUpMessage, monthLabel, needsFollowUp, type AmendmentSummary, type QuoteStatus, type QuoteSummary } from "@/lib/dashboard/stats";
 import { deleteDraftQuote, duplicateQuote, recordFollowUp } from "./devis/actions";
 
 export interface DashboardQuote extends QuoteSummary {
@@ -38,9 +38,9 @@ function Trend({ value, points = false }: { value: number | null; points?: boole
   );
 }
 
-export function Dashboard({ quotes, followUpDays, vatRegime, company, nowIso, showMargin = true }: { quotes: DashboardQuote[]; followUpDays: number; vatRegime: "franchise" | "assujetti"; company: { name: string; phone: string | null }; nowIso: string; showMargin?: boolean }) {
+export function Dashboard({ quotes, amendments = [], followUpDays, vatRegime, company, nowIso, showMargin = true }: { quotes: DashboardQuote[]; amendments?: AmendmentSummary[]; followUpDays: number; vatRegime: "franchise" | "assujetti"; company: { name: string; phone: string | null }; nowIso: string; showMargin?: boolean }) {
   const now = useMemo(() => new Date(nowIso), [nowIso]);
-  const d = useMemo(() => dashboard(quotes, now, followUpDays), [quotes, now, followUpDays]);
+  const d = useMemo(() => dashboard(quotes, now, followUpDays, amendments), [quotes, now, followUpDays, amendments]);
   const [filter, setFilter] = useState<Filter>("tous");
   const [q, setQ] = useState("");
   const toFollow = new Set(d.toFollowUp);
@@ -68,6 +68,16 @@ export function Dashboard({ quotes, followUpDays, vatRegime, company, nowIso, sh
           <p className="text-sm font-bold uppercase text-slate-600">CA signé HT</p>
           <p className="text-3xl font-extrabold">{formatEuros(c.signedHtCents, { decimals: false })}</p>
           <p className="text-sm text-slate-600">{c.acceptedCount} devis accepté(s)</p>
+          {c.amendmentsCount > 0 && (
+            <dl className="mt-1 grid grid-cols-2 text-sm">
+              <dt className="text-slate-600">Montant initial</dt>
+              <dd className="text-right">{formatEuros(c.initialHtCents, { decimals: false })}</dd>
+              <dt className="text-slate-600">Avenants ({c.amendmentsCount})</dt>
+              <dd className="text-right">{formatEuros(c.amendmentsHtCents, { decimals: false })}</dd>
+              <dt className="font-bold">Total</dt>
+              <dd className="text-right font-bold">{formatEuros(c.signedHtCents, { decimals: false })}</dd>
+            </dl>
+          )}
           <Trend value={d.changes.signedHt} />
         </div>
         {showMargin && <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">

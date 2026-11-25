@@ -89,6 +89,9 @@ const ACCESSORIES: CatAccessory[] = [
   acc("registre_zonage", "Registre", "u", 14000),
   acc("thermostat_zone", "Thermostat", "u", 9000),
   acc("module_zonage", "Module zonage", "u", 39000),
+  acc("fixation_chimique", "Kit chevilles chimiques", "u", 3900),
+  acc("fixation_ite", "Fixation ITE", "u", 14900),
+  acc("support_toiture", "Support toiture", "u", 18900),
 ];
 
 const room = (id: string, needW: number, level = 0, indoorType: RoomNeed["indoorType"] = "mural"): RoomNeed => ({ id, name: id, needW, level, indoorType });
@@ -218,6 +221,20 @@ describe("lignes du devis", () => {
     const m: Metre = { ...EMPTY_METRE, toggles: { "support_sol:s1": true, "support_mural:s1": false } };
     const { lines } = buildLines(eq, [room("Salon", 3140)], m, ACCESSORIES, LS, 1, null);
     expect(lines.filter((l) => l.radioGroup && l.enabled).map((l) => l.key)).toEqual(["support_sol:s1"]);
+  });
+
+  it("support vérifié sur le plan : la fourniture correspondante est ajoutée automatiquement", () => {
+    const eq = monoSalon();
+    const ik = eq.systems[0]!.indoors[0]!.key;
+    const enabled = (fixation: Metre["fixation"], toggles: Metre["toggles"] = {}) =>
+      buildLines(eq, [room("Salon", 3140)], { ...EMPTY_METRE, fixation, toggles }, ACCESSORIES, LS, 1, null).lines.filter((l) => l.enabled && /support|fixation/.test(l.key)).map((l) => l.key);
+    expect(enabled({ s1: "mur_plein" })).toEqual(["support_mural:s1"]);
+    expect(enabled({ s1: "chevilles_chimiques", [ik]: "ite" })).toEqual([`fixation_ite:${ik}`, "support_mural:s1", "fixation_chimique:s1"]);
+    expect(enabled({ s1: "ite" })).toEqual(["support_mural:s1", "fixation_ite:s1"]);
+    expect(enabled({ s1: "console_sol" })).toEqual(["support_sol:s1"]);
+    expect(enabled({ s1: "toiture" })).toEqual(["support_toiture:s1"]);
+    // sans choix : comportement de l'assistant (support mural par défaut)
+    expect(enabled(undefined)).toEqual(["support_mural:s1"]);
   });
 
   it("métré : longueur ajustée, quantité forcée, ligne décochée", () => {

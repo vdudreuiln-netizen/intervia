@@ -39,11 +39,13 @@ export default async function SiteJobPage({ params }: { params: Promise<{ id: st
       </div>
     );
   }
-  const [{ data: job }, { data: photoRows }, { data: devRows }, { data: accessories }] = await Promise.all([
+  const [{ data: job }, { data: photoRows }, { data: devRows }, { data: accessories }, { data: amRows }, { data: totals }] = await Promise.all([
     supabase.from("site_jobs").select("*").eq("quote_id", id).maybeSingle(),
     supabase.from("site_photos").select("id, path, element_id, level, x, y, kind, caption, created_at").eq("quote_id", id).order("created_at"),
     supabase.from("site_deviations").select("id, kind, equipment_key, quantity, description, status, amendment_number, created_at").eq("quote_id", id).order("created_at"),
     supabase.from("catalog_accessories_public").select("id, name, diameter, unit, category").eq("active", true).order("name").limit(500),
+    supabase.from("quote_amendments").select("number, status, total_ht_cents, total_ttc_cents").eq("quote_id", id).order("number"),
+    supabase.from("quotes").select("total_ht_cents, total_ttc_cents").eq("id", id).single(),
   ]);
   const signedPlans = rc.planRows.length ? (await supabase.storage.from("plans").createSignedUrls(rc.planRows.map((p) => p.imagePath), 3600)).data ?? [] : [];
   const signedPhotos = (photoRows ?? []).length ? (await supabase.storage.from("chantier").createSignedUrls((photoRows ?? []).map((p) => p.path as string), 3600)).data ?? [] : [];
@@ -72,7 +74,7 @@ export default async function SiteJobPage({ params }: { params: Promise<{ id: st
       status: d.status as DeviationStatus,
       amendment: d.amendment_number,
       createdAt: d.created_at,
-      costs: c ? { priced: ((c.lines as DevLine[]) ?? []).length > 0, extraPurchaseCents: Number(c.extra_purchase_cents), extraSaleCents: Number(c.extra_sale_cents), marginIfBilledCents: Number(c.margin_if_billed_cents), marginIfAbsorbedCents: Number(c.margin_if_absorbed_cents) } : null,
+      costs: c ? { lines: ((c.lines as DevLine[]) ?? []).map((l) => ({ designation: l.designation, quantity: l.quantity, unit: l.unit, unitPurchaseCents: l.unitPurchaseCents, unitSaleCents: l.unitSaleCents })), priced: ((c.lines as DevLine[]) ?? []).length > 0, extraPurchaseCents: Number(c.extra_purchase_cents), extraSaleCents: Number(c.extra_sale_cents), marginIfBilledCents: Number(c.margin_if_billed_cents), marginIfAbsorbedCents: Number(c.margin_if_absorbed_cents) } : null,
     };
   });
 
@@ -97,6 +99,8 @@ export default async function SiteJobPage({ params }: { params: Promise<{ id: st
         checks={((job?.checks as Checks | null) ?? {}) as Checks}
         photos={photos}
         deviations={deviations}
+        amendments={(amRows ?? []).map((a) => ({ number: a.number, status: a.status, totalHtCents: Number(a.total_ht_cents), totalTtcCents: Number(a.total_ttc_cents) }))}
+        quoteTotals={{ htCents: Number(totals?.total_ht_cents ?? 0), ttcCents: Number(totals?.total_ttc_cents ?? 0) }}
         indoors={indoors}
         accessories={(accessories ?? []).map((a) => ({ id: a.id as string, label: [a.name, a.diameter].filter(Boolean).join(" ") }))}
         sections={sections}

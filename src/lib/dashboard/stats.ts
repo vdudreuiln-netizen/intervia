@@ -16,6 +16,15 @@ export interface QuoteSummary {
   lastFollowUpAt: string | null;
 }
 
+/** Avenant accepté par le client (le devis signé n'est jamais modifié). */
+export interface AmendmentSummary {
+  quoteId: string;
+  totalHtCents: number;
+  /** Effet sur la marge nette (0 si non visible). */
+  marginCents: number;
+  decidedAt: string;
+}
+
 const monthFmt = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit" });
 
 /** « 2026-11 » pour une date ISO, à l'heure de Paris. */
@@ -35,8 +44,13 @@ export function monthLabel(month: string): string {
 
 export interface MonthStats {
   month: string;
-  /** CA signé HT : devis acceptés dans le mois (date du clic « Accepté »). */
+  /** CA signé HT = devis acceptés dans le mois + avenants acceptés dans le mois. */
   signedHtCents: number;
+  /** Détail : montant initial des devis acceptés dans le mois. */
+  initialHtCents: number;
+  /** Détail : avenants acceptés dans le mois. */
+  amendmentsHtCents: number;
+  amendmentsCount: number;
   signedMarginCents: number;
   acceptedCount: number;
   /** Devis envoyés dans le mois (ou acceptés sans avoir été marqués envoyés). */
@@ -45,7 +59,9 @@ export interface MonthStats {
   conversionRate: number | null;
 }
 
-export function monthStats(quotes: QuoteSummary[], month: string): MonthStats {
+export function monthStats(quotes: QuoteSummary[], month: string, amendments: AmendmentSummary[] = []): MonthStats {
+  const am = amendments.filter((a) => parisMonth(a.decidedAt) === month);
+  const amendmentsHtCents = am.reduce((s, a) => s + a.totalHtCents, 0);
   const accepted = quotes.filter((q) => q.status === "accepte" && q.decidedAt && parisMonth(q.decidedAt) === month);
   const sentAt = (q: QuoteSummary) => q.sentAt ?? (q.status === "accepte" || q.status === "refuse" ? q.decidedAt : null);
   const sent = quotes.filter((q) => {
@@ -54,8 +70,11 @@ export function monthStats(quotes: QuoteSummary[], month: string): MonthStats {
   });
   return {
     month,
-    signedHtCents: accepted.reduce((a, q) => a + q.totalHtCents, 0),
-    signedMarginCents: accepted.reduce((a, q) => a + q.netMarginCents, 0),
+    signedHtCents: accepted.reduce((a, q) => a + q.totalHtCents, 0) + amendmentsHtCents,
+    initialHtCents: accepted.reduce((a, q) => a + q.totalHtCents, 0),
+    amendmentsHtCents,
+    amendmentsCount: am.length,
+    signedMarginCents: accepted.reduce((a, q) => a + q.netMarginCents, 0) + am.reduce((s, a) => s + a.marginCents, 0),
     acceptedCount: accepted.length,
     sentCount: sent.length,
     conversionRate: sent.length ? sent.filter((q) => q.status === "accepte").length / sent.length : null,
@@ -81,10 +100,10 @@ export function needsFollowUp(q: QuoteSummary, days: number, now: Date): boolean
   return now.getTime() - last.getTime() >= days * 86_400_000;
 }
 
-export function dashboard(quotes: QuoteSummary[], now: Date, followUpDays: number): Dashboard {
+export function dashboard(quotes: QuoteSummary[], now: Date, followUpDays: number, amendments: AmendmentSummary[] = []): Dashboard {
   const month = parisMonth(now);
-  const current = monthStats(quotes, month);
-  const previous = monthStats(quotes, previousMonth(month));
+  const current = monthStats(quotes, month, amendments);
+  const previous = monthStats(quotes, previousMonth(month), amendments);
   return {
     current,
     previous,

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button, Card, Field, LinkButton, Notice, Select } from "@/components/ui";
 import { decimalToInput, parseDecimal } from "@/lib/format";
 import type { Pt } from "@/lib/plans/geometry";
-import { CONTEXT_MARKERS, equipmentTags, MARKER_LABELS, markerTag, ROUTE_COLORS, ROUTE_LABELS, routeLengthM, type Layout, type Marker, type MarkerKind, type MetreReportLine, type RouteKind, type UeMount } from "@/lib/plans/layout";
+import { CONTEXT_MARKERS, equipmentTags, MARKER_LABELS, markerTag, ROUTE_COLORS, ROUTE_LABELS, routeLengthM, SUPPORT_LABELS, SUPPORTS_UE, SUPPORTS_UI, type Layout, type SupportKind, type Marker, type MarkerKind, type MetreReportLine, type RouteKind, type UeMount } from "@/lib/plans/layout";
 import { blocking, dirOf, evaluateRules, type Finding, type RuleContext } from "@/lib/plans/rules";
 import { suggestDucted, suggestIndoor, suggestMissing, suggestOutdoor, type SuggestContext } from "@/lib/plans/suggest";
 import { saveLayout } from "./actions";
@@ -295,8 +295,20 @@ export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg
           )}
           {sel.kind === "ue" && <Select label="Pose" value={sel.mount ?? "sol"} onChange={(v) => patch(sel.id, { mount: v as UeMount })} options={Object.entries(MOUNTS).map(([value, label]) => ({ value, label }))} />}
           {sel.kind === "evacuation" && <Field label="Hauteur de l'entrée d'eau au-dessus du sol" inputMode="decimal" suffix="m" value={decimalToInput(sel.heightM ?? null)} placeholder="0,5" onChange={(v) => patch(sel.id, { heightM: parseDecimal(v) ?? undefined })} hint="Sert à vérifier la pente des condensats" />}
+          {(sel.kind === "ue" || (sel.kind === "ui" && indoors.find((i) => i.key === sel.equipmentKey)?.product.type === "ui_murale")) && (
+            <Select
+              label="Support vérifié sur place (obligatoire)"
+              value={sel.support ?? ""}
+              onChange={(v) => {
+                const support = v === "" ? undefined : (v as SupportKind);
+                patch(sel.id, { support, ...(sel.kind === "ue" && support === "console_sol" ? { mount: "sol" as const } : {}), ...(sel.kind === "ue" && support === "toiture" ? { mount: "toiture" as const } : {}) });
+              }}
+              options={[{ value: "", label: "— À vérifier —" }, ...(sel.kind === "ue" ? SUPPORTS_UE : SUPPORTS_UI).map((k) => ({ value: k, label: SUPPORT_LABELS[k] }))]}
+              hint="La fourniture correspondante est ajoutée au devis (kit chevilles chimiques, fixation ITE, console, support toiture)."
+            />
+          )}
           {(sel.kind === "ui" || sel.kind === "ue") &&
-            (["degagements", ...(sel.kind === "ue" ? ["acces"] : [])] as const).map((c) => (
+            (["degagements", ...(sel.kind === "ue" ? ["sol_degage", "acces"] : [])] as const).map((c) => (
               <label key={c} className="flex items-start gap-3 text-base">
                 <input
                   type="checkbox"
@@ -304,7 +316,7 @@ export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg
                   checked={sel.confirmed?.includes(c) ?? false}
                   onChange={(e) => patch(sel.id, { confirmed: e.target.checked ? [...(sel.confirmed ?? []), c] : (sel.confirmed ?? []).filter((x) => x !== c) })}
                 />
-                {c === "degagements" ? "Dégagements de la notice vérifiés sur place (plafond, murs, sol, devant l'unité)" : "Accès sûr pour l'entretien vérifié"}
+                {c === "degagements" ? "Dégagements de la notice vérifiés sur place (plafond, murs, devant l'unité)" : c === "sol_degage" ? "Sol dégagé devant l'unité vérifié sur place" : "Accès sûr pour l'entretien vérifié"}
               </label>
             ))}
           <FindingList findings={byElement(sel.id)} forceText={forceText} setForceText={setForceText} force={force} unforce={unforce} />

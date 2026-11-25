@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CatProduct, Equipment } from "@/lib/quote/types";
 import type { Layout, Marker } from "./layout";
 import { sanitizeLayout } from "./layout";
-import { autoToggles, blocking, DEFAULT_RULE_SETTINGS, evaluateRules, minRoomArea, ruleSettings, systemChargeKg, type RuleContext, type RulePlan, type UnitTech } from "./rules";
+import { autoToggles, blocking, DEFAULT_RULE_SETTINGS, evaluateRules, RULES, minRoomArea, ruleSettings, systemChargeKg, type RuleContext, type RulePlan, type UnitTech } from "./rules";
 import { suggestIndoor, suggestMissing, suggestOutdoor, type SuggestContext } from "./suggest";
 
 const sq = (x: number, y: number, w: number, h: number) => [
@@ -42,8 +42,8 @@ const ctx = (layout: Partial<Layout>, over: Partial<RuleContext> = {}): RuleCont
 });
 const ids = (c: RuleContext) => evaluateRules(c).map((f) => f.ruleId);
 
-const ui1 = mk({ id: "ui1", kind: "ui", x: 300, y: 10, equipmentKey: "i1", angle: 180, gapCm: 20 });
-const ue1 = mk({ id: "ue1", kind: "ue", x: 300, y: -60, equipmentKey: "s1", mount: "sol", confirmed: ["degagements"] });
+const ui1 = mk({ id: "ui1", kind: "ui", x: 300, y: 10, equipmentKey: "i1", angle: 180, gapCm: 20, support: "mur_plein" });
+const ue1 = mk({ id: "ue1", kind: "ue", x: 300, y: -60, equipmentKey: "s1", mount: "sol", support: "console_sol", confirmed: ["degagements", "sol_degage"] });
 const cond = { id: "c1", kind: "condensats" as const, equipmentKey: "i1", points: [{ x: 300, y: 10 }, { x: 300, y: -30 }], extraM: 0 };
 const link = (len: number) => ({ id: "l1", kind: "liaison" as const, equipmentKey: "i1", points: [{ x: 300, y: 10 }, { x: 300, y: 10 - len * 100 }], extraM: 0 });
 
@@ -95,9 +95,9 @@ describe("règles impératives", () => {
     expect(blocking(fs)).toEqual([]);
   });
   it("unité extérieure : accès et dégagements à confirmer", () => {
-    const high = { ...ue1, mount: "mural_haut" as const, confirmed: [] };
+    const high = { ...ue1, mount: "mural_haut" as const, confirmed: ["sol_degage"] };
     expect(ids(ctx({ markers: [ui1, high], routes: [cond] }))).toEqual(expect.arrayContaining(["ue_acces", "degagements"]));
-    expect(ids(ctx({ markers: [ui1, { ...high, confirmed: ["acces", "degagements"] }], routes: [cond] }))).not.toContain("ue_acces");
+    expect(ids(ctx({ markers: [ui1, { ...high, confirmed: ["acces", "degagements", "sol_degage"] }], routes: [cond] }))).not.toContain("ue_acces");
   });
   it("forcer exige un motif ; une règle désactivée ne s'applique plus", () => {
     const base = { markers: [{ ...ui1, x: 700, y: 400 }, ue1], routes: [{ ...cond, points: [{ x: 700, y: 400 }, { x: 700, y: 450 }] }] };
@@ -133,13 +133,26 @@ describe("règles de préférence (orange)", () => {
       }),
     );
     const got = fs.map((f) => f.ruleId);
-    expect(got).toEqual(expect.arrayContaining(["lit", "soufflage_meubles", "mur_exterieur", "ue_rue", "ue_chambres", "ue_voisins"]));
+    expect(got).toEqual(expect.arrayContaining(["lit", "soufflage_meubles", "ue_rue", "ue_chambres", "ue_voisins"]));
     expect(fs.filter((f) => ["lit", "ue_rue"].includes(f.ruleId)).every((f) => f.severity === "orange")).toBe(true);
     expect(blocking(fs)).toEqual([]);
   });
   it("soufflage dans la largeur signalé", () => {
     expect(ids(ctx({ markers: [{ ...ui1, x: 300, y: 10, angle: 180 }, ue1], routes: [cond] }))).toContain("soufflage_longueur"); // 4 m au lieu de 6 m
     expect(ids(ctx({ markers: [{ ...ui1, x: 10, y: 200, angle: 90 }, ue1], routes: [{ ...cond, points: [{ x: 10, y: 200 }, { x: -30, y: 200 }] }] }))).not.toContain("soufflage_longueur");
+  });
+});
+
+describe("support de fixation et sol dégagé (vérifiés sur place)", () => {
+  it("support obligatoire pour l'UE et l'UI murale ; sol dégagé obligatoire pour l'UE", () => {
+    const fs = evaluateRules(ctx({ markers: [{ ...ui1, support: undefined }, { ...ue1, support: undefined, confirmed: ["degagements"] }], routes: [cond] }));
+    const red = blocking(fs);
+    expect(red.filter((f) => f.ruleId === "support_fixation").map((f) => f.elementId).sort()).toEqual(["ue1", "ui1"]);
+    expect(red.filter((f) => f.ruleId === "sol_degage").map((f) => f.elementId)).toEqual(["ue1"]);
+    expect(ids(ctx({ markers: [ui1, ue1], routes: [cond] }))).not.toContain("support_fixation");
+  });
+  it("la règle « mur extérieur » n'existe plus", () => {
+    expect(RULES.some((r) => (r.id as string) === "mur_exterieur")).toBe(false);
   });
 });
 
@@ -170,7 +183,7 @@ describe("suggestions d'emplacement", () => {
     const placed = { ...ui1, x: 20, y: 200, angle: 90 };
     const added = suggestMissing(sctx([placed]), new Set());
     expect(added.map((m) => `${m.kind}:${m.equipmentKey}`).sort()).toEqual(["ue:s1", "ui:i2"]);
-    const all = evaluateRules(ctx({ markers: [placed, ...added.map((m) => ({ ...m, gapCm: 20, confirmed: ["degagements"] }))], routes: [] }));
+    const all = evaluateRules(ctx({ markers: [placed, ...added.map((m) => ({ ...m, gapCm: 20, support: "mur_plein" as const, confirmed: ["degagements", "sol_degage"] }))], routes: [] }));
     expect(all.filter((f) => f.severity === "rouge").map((f) => f.ruleId).filter((r) => r !== "condensats")).toEqual([]);
     expect(suggestMissing(sctx([placed]), new Set(["ue:s1", "ui:i2"]))).toEqual([]);
   });

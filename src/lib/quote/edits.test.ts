@@ -44,3 +44,27 @@ describe("ligne libre", () => {
     expect(Object.keys(bad.errors).sort()).toEqual(["designation", "purchase", "quantity", "sale"]);
   });
 });
+
+import { LOSS_MESSAGE, lossLines, sellsAtLoss } from "./edits";
+
+describe("aucune ligne vendue à perte", () => {
+  const P = { euros: parseEuros, decimal: parseDecimal, percent: parsePercent };
+  it("refuse une ligne libre dont la vente est sous le coût", () => {
+    const r = parseFreeLine({ designation: "Support spécial", kind: "material", quantity: "1", unit: "u", purchase: "120", sale: "99", vatRate: "10" }, "assujetti", P);
+    expect(r.ok).toBe(false);
+    expect(r.errors.sale).toBe(LOSS_MESSAGE);
+  });
+  it("accepte vente = coût (marge nulle) et au-dessus", () => {
+    expect(sellsAtLoss(12000, 12000)).toBe(false);
+    expect(sellsAtLoss(11999, 12000)).toBe(true);
+    expect(parseFreeLine({ designation: "X", kind: "material", quantity: "1", unit: "u", purchase: "120", sale: "120", vatRate: "10" }, "assujetti", P).ok).toBe(true);
+  });
+  it("repère les lignes passées sous le coût après remise", () => {
+    const lines = [
+      { id: "a", quantity: 1, netSaleCents: 9000, totalPurchaseCents: 10000 },
+      { id: "b", quantity: 2, netSaleCents: 30000, totalPurchaseCents: 10000 },
+      { id: "c", quantity: 0, netSaleCents: 0, totalPurchaseCents: 10000 },
+    ];
+    expect(lossLines(lines).map((l) => l.id)).toEqual(["a"]);
+  });
+});

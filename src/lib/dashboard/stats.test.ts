@@ -54,6 +54,16 @@ describe("indicateurs du mois", () => {
     expect(d.changes.conversionPoints).toBeCloseTo(1 / 3 - 2 / 3);
     expect(change(100, 0)).toBeNull();
   });
+  it("avenants acceptés : comptés dans le CA du mois de leur acceptation, avec le détail", () => {
+    const amendments = [
+      { quoteId: "x", totalHtCents: 15600, marginCents: 8000, decidedAt: "2026-11-20T10:00:00Z" },
+      { quoteId: "y", totalHtCents: 40000, marginCents: 20000, decidedAt: "2026-10-28T10:00:00Z" }, // avenant d'octobre
+    ];
+    const s = monthStats(quotes, "2026-11", amendments);
+    expect(s).toMatchObject({ initialHtCents: 800000, amendmentsHtCents: 15600, amendmentsCount: 1, signedHtCents: 815600, signedMarginCents: 248000 });
+    const d = dashboard(quotes, new Date("2026-11-14T12:00:00Z"), 7, amendments);
+    expect(d.previous.signedHtCents).toBe(240000);
+  });
   it("devis accepté sans avoir été marqué envoyé : compté comme envoyé", () => {
     expect(monthStats([q("accepte", 1, 1, null, "2026-11-03T10:00:00Z")], "2026-11").conversionRate).toBe(1);
   });
