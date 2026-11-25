@@ -1,8 +1,9 @@
 /**
  * Recoupement du calcul de surface minimale R32 avec les tableaux publiés dans
- * les notices d'installation des fabricants. Règle : le résultat ClimDevis doit
- * être ÉGAL OU PLUS PRUDENT (surface plus grande) que la notice.
- * Affiché dans Paramètres › Règles d'implantation et vérifié par les tests.
+ * les notices d'installation des fabricants. Objectif : un résultat ClimDevis égal
+ * ou plus prudent (surface plus grande) que la notice.
+ * À TITRE INFORMATIF : affiché dans Paramètres › Règles d'implantation, ne bloque
+ * jamais (valeurs des notices à vérifier sur les PDF des fabricants).
  */
 import { minRoomArea } from "./rules";
 

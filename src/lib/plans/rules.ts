@@ -114,7 +114,7 @@ export const POSE_HEIGHTS: { value: number; label: string }[] = [
   { value: 1.8, label: "1,8 m – murale" },
   { value: 2.2, label: "2,2 m – plafond (cassette, gainable)" },
 ];
-export const R32_WARNING = "Calcul indicatif selon IEC 60335-2-40, à confirmer avec la notice du fabricant.";
+export const R32_WARNING = "Calcul indicatif selon IEC 60335-2-40, à confirmer avec la notice d'installation du fabricant.";
 /** Plancher de prudence : surface mini par kg de fluide (m²/kg). */
 export const MIN_AREA_PER_KG = 3;
 

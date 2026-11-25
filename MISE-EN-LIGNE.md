@@ -202,6 +202,9 @@ Sans cette clé, tout fonctionne : import Excel / CSV des tarifs, et pièces des
 
 ## Partie F ter — Mettre à jour une base déjà en service (migrations 10 à 13)
 
+> Guide détaillé pour un non-développeur (installation de l'outil de sauvegarde, commandes Windows / Mac,
+> mise en ligne, vérifications) : **`DEPLOYER-CETTE-VERSION.md`**.
+
 **Toujours sauvegarder AVANT d'exécuter une migration.** Une migration ne s'annule pas d'un clic.
 
 ### 1. Sauvegarder (10 min)
@@ -240,7 +243,7 @@ le détecteur de fuite, le SIRET des clients et la numérotation des fiches d'in
 ### 3. Compléter vos paramètres
 
 **Paramètres › Règles d'implantation et fiche fluides** : pays (France = CERFA 15497*04), n° d'attestation de capacité,
-détecteur de fuite (identification + date du dernier contrôle). Le tableau « recoupement avec les notices » doit afficher 4 ✔.
+détecteur de fuite (identification + date du dernier contrôle). Le tableau « recoupement avec les notices » est informatif (il ne bloque rien).
 
 > Les plans déjà implantés affichent désormais 2 alertes rouges par unité tant que le **support vérifié** et le
 > **sol dégagé** (unité extérieure) ne sont pas renseignés : c'est voulu.

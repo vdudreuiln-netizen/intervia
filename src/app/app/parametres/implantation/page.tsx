@@ -31,7 +31,7 @@ function R32CrossCheck() {
   return (
     <Card title="Surface minimale R32 : recoupement avec les notices">
       <Notice>{R32_WARNING}</Notice>
-      <p className="text-base text-slate-700">Formule de l&apos;annexe GG de l&apos;IEC 60335-2-40, hauteurs de pose 0,6 / 1,0 / 1,8 / 2,2 m, jamais moins de 3 m² par kg, arrondi au m² supérieur. Règle : ClimDevis doit donner une surface égale ou plus grande (plus prudente) que la notice.</p>
+      <p className="text-base text-slate-700">Formule de l&apos;annexe GG de l&apos;IEC 60335-2-40, hauteurs de pose 0,6 / 1,0 / 1,8 / 2,2 m, jamais moins de 3 m² par kg, arrondi au m² supérieur. Recoupement à titre informatif : valeurs relevées dans des notices publiées, non encore vérifiées sur les PDF des fabricants. Seule la notice d&apos;installation de l&apos;appareil posé fait foi.</p>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-base">
           <thead>
@@ -55,7 +55,7 @@ function R32CrossCheck() {
                 </td>
                 <td className="py-2 pr-2">{fmt(r.noticeM2)}</td>
                 <td className="py-2 pr-2 font-bold">{fmt(r.climdevisM2)}</td>
-                <td className={`py-2 font-bold ${r.ok ? "text-ok" : "text-danger"}`}>{r.ok ? (r.climdevisM2 === r.noticeM2 ? "✔ égal" : "✔ plus prudent") : "✖ moins prudent"}</td>
+                <td className={`py-2 font-bold ${r.ok ? "text-ok" : "text-amber-800"}`}>{r.ok ? (r.climdevisM2 === r.noticeM2 ? "✔ égal" : "✔ plus prudent") : "⚠ écart à vérifier"}</td>
               </tr>
             ))}
           </tbody>
