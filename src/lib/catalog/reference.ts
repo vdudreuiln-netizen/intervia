@@ -206,11 +206,12 @@ export function newerTariffsAvailable(used: { brandName: string; tariffDate: str
 // Priorité des prix publics et affichage de la source
 // ---------------------------------------------------------------------------
 
-export type PriceSource = "commun" | "personnel" | "manuel";
+export type PriceSource = "commun" | "personnel" | "personnel_recent" | "manuel";
 
 export const PRICE_SOURCE_LABELS: Record<PriceSource, string> = {
   commun: "Tarif commun",
   personnel: "Tarif importé",
+  personnel_recent: "Tarif importé plus récent que le tarif commun",
   manuel: "Saisi à la main",
 };
 
@@ -224,11 +225,16 @@ export interface ResolvedPublicPrice {
 
 /**
  * Règle de priorité du prix PUBLIC (le prix net importé, lui, s'utilise tel quel) :
- *  1. tarif commun publié (catalogue ClimDevis, accord de la marque) ;
+ *  1. tarif commun publié (catalogue ClimDevis, accord de la marque), SAUF si le
+ *     tarif importé par l'artisan (ou sa saisie) a une date plus récente : alors
+ *     le plus récent l'emporte (« Tarif importé plus récent que le tarif commun ») ;
  *  2. sinon tarif personnel importé ou prix saisi : le plus récent l'emporte.
  * La remise distributeur × marque s'applique ensuite (netOffers).
  */
 export function resolvePublicPrice(common: { cents: number; date: string } | null, personal: { cents: number; supplierId: string; date: string | null; origin: "import" | "manuel" } | null): ResolvedPublicPrice | null {
+  if (common && personal && personal.date && personal.date > common.date) {
+    return { cents: personal.cents, source: personal.origin === "manuel" ? "manuel" : "personnel_recent", date: personal.date, supplierId: personal.supplierId };
+  }
   if (common) return { cents: common.cents, source: "commun", date: common.date, supplierId: null };
   if (personal) return { cents: personal.cents, source: personal.origin === "manuel" ? "manuel" : "personnel", date: personal.date, supplierId: personal.supplierId };
   return null;
@@ -239,5 +245,6 @@ export function priceSourceText(source: PriceSource | null | undefined, date: st
   if (!source) return "Source inconnue";
   const d = date && /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10).split("-").reverse().join("/") : null;
   if (!d) return PRICE_SOURCE_LABELS[source];
+  if (source === "personnel_recent") return `${PRICE_SOURCE_LABELS[source]} (tarif du ${d})`;
   return source === "manuel" ? `${PRICE_SOURCE_LABELS[source]} le ${d}` : `${PRICE_SOURCE_LABELS[source]} du ${d}`;
 }

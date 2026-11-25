@@ -2605,10 +2605,11 @@ alter table supplier_offers add column pack_label text;
 update supplier_offers set price_origin = 'manuel' where match_reason in ('Reprise du catalogue', 'Saisi à la main');
 update supplier_offers set tariff_date = updated_at::date where tariff_date is null;
 
--- Articles : source et date du prix public retenu (affichage)
-alter table products    add column public_price_source text check (public_price_source in ('commun', 'personnel', 'manuel'));
+-- Articles : source et date du prix public retenu (affichage).
+-- « personnel_recent » : tarif importé plus récent que le tarif commun publié (il l'emporte).
+alter table products    add column public_price_source text check (public_price_source in ('commun', 'personnel', 'personnel_recent', 'manuel'));
 alter table products    add column public_price_date date;
-alter table accessories add column public_price_source text check (public_price_source in ('commun', 'personnel', 'manuel'));
+alter table accessories add column public_price_source text check (public_price_source in ('commun', 'personnel', 'personnel_recent', 'manuel'));
 alter table accessories add column public_price_date date;
 update products p set public_price_source = 'personnel', public_price_date = (select max(o.tariff_date) from supplier_offers o where o.product_id = p.id) where public_price_source is null;
 update accessories a set public_price_source = 'personnel', public_price_date = (select max(o.tariff_date) from supplier_offers o where o.accessory_id = a.id) where public_price_source is null;
@@ -2882,6 +2883,15 @@ begin
   return jsonb_build_object('import_id', imp.id, 'filename', imp.filename, 'restored', n_restored, 'deleted', n_deleted, 'disabled', n_disabled);
 end $$;
 revoke all on function public.undo_last_catalog_import() from public, anon;
+
+-- Date d'effet du tarif commun publié d'un produit du catalogue commun (null si aucun)
+create or replace function public.published_ref_date(p_ref_product_id uuid)
+returns date language sql stable security definer set search_path = public as $$
+  select max(l.effective_date) from ref_prices p join ref_price_lists l on l.id = p.price_list_id
+  where p_ref_product_id is not null and p.ref_product_id = p_ref_product_id and l.status = 'publie'
+$$;
+revoke all on function public.published_ref_date(uuid) from public, anon;
+grant execute on function public.published_ref_date(uuid) to authenticated;
 grant execute on function public.undo_last_catalog_import() to authenticated;
 
 -- -----------------------------------------------------------------------------
@@ -2893,16 +2903,22 @@ returns void language plpgsql security invoker set search_path = public as $$
 declare cid uuid := current_company_id();
 begin
   if cid is null then raise exception 'Non authentifié'; end if;
+  -- Tarif commun publié : il l'emporte, SAUF si le tarif importé est plus récent
   update products p set
-    public_price_cents  = (x->>'public_price_cents')::bigint,
-    public_price_source = coalesce(x->>'public_price_source', 'personnel'),
-    public_price_date   = (x->>'public_price_date')::date
-  from jsonb_array_elements(p_products) x
-  where p.id = (x->>'id')::uuid and p.company_id = cid and (x->>'public_price_cents') is not null
-    and (p.public_price_cents is distinct from (x->>'public_price_cents')::bigint
-         or p.public_price_source is distinct from coalesce(x->>'public_price_source', 'personnel')
-         or p.public_price_date is distinct from (x->>'public_price_date')::date)
-    and not public.has_published_ref_price(p.ref_product_id);
+    public_price_cents  = x.cents,
+    public_price_source = x.source,
+    public_price_date   = x.d
+  from (
+    select (e->>'id')::uuid as id, (e->>'public_price_cents')::bigint as cents, (e->>'public_price_date')::date as d,
+           case when public.published_ref_date(pr.ref_product_id) is not null and coalesce(e->>'public_price_source', 'personnel') <> 'manuel'
+                then 'personnel_recent' else coalesce(e->>'public_price_source', 'personnel') end as source,
+           public.published_ref_date(pr.ref_product_id) as common_date
+    from jsonb_array_elements(p_products) e join products pr on pr.id = (e->>'id')::uuid and pr.company_id = cid
+    where (e->>'public_price_cents') is not null
+  ) x
+  where p.id = x.id and p.company_id = cid
+    and (x.common_date is null or (x.d is not null and x.d > x.common_date))
+    and (p.public_price_cents is distinct from x.cents or p.public_price_source is distinct from x.source or p.public_price_date is distinct from x.d);
 
   update accessories a set
     public_price_cents   = (x->>'public_price_cents')::bigint,
@@ -2941,9 +2957,9 @@ begin
   insert into price_history (company_id, product_id, old_public_price_cents, new_public_price_cents, ref_price_list_id)
   select pr.company_id, pr.id, pr.public_price_cents, p.public_price_cents, p_list_id
   from products pr join ref_prices p on p.ref_product_id = pr.ref_product_id and p.price_list_id = p_list_id
-  where pr.public_price_cents <> p.public_price_cents;
+  where pr.public_price_cents <> p.public_price_cents and not exists (select 1 from supplier_offers o where o.product_id = pr.id and o.public_price_cents is not null and o.match_status <> 'probable' and o.tariff_date > l.effective_date);
   for c in
-    select pr.company_id, count(*) filter (where pr.public_price_cents <> p.public_price_cents) as n
+    select pr.company_id, count(*) filter (where pr.public_price_cents <> p.public_price_cents and not exists (select 1 from supplier_offers o where o.product_id = pr.id and o.public_price_cents is not null and o.match_status <> 'probable' and o.tariff_date > l.effective_date)) as n
     from products pr join ref_prices p on p.ref_product_id = pr.ref_product_id and p.price_list_id = p_list_id
     group by pr.company_id
   loop
@@ -2951,8 +2967,14 @@ begin
            public_price_source = 'commun', public_price_date = l.effective_date
       from ref_prices p
       where pr.company_id = c.company_id and p.ref_product_id = pr.ref_product_id and p.price_list_id = p_list_id
+        -- un tarif importé par l'artisan plus récent que ce tarif commun reste en vigueur
+        and not exists (select 1 from supplier_offers o where o.product_id = pr.id and o.public_price_cents is not null and o.match_status <> 'probable' and o.tariff_date > l.effective_date)
         and (pr.public_price_cents <> p.public_price_cents or pr.family is distinct from coalesce(p.family, pr.family)
              or pr.public_price_source is distinct from 'commun' or pr.public_price_date is distinct from l.effective_date);
+    update products pr set public_price_source = 'personnel_recent'
+      from ref_prices p
+      where pr.company_id = c.company_id and p.ref_product_id = pr.ref_product_id and p.price_list_id = p_list_id
+        and pr.public_price_source <> 'manuel' and exists (select 1 from supplier_offers o where o.product_id = pr.id and o.public_price_cents is not null and o.match_status <> 'probable' and o.tariff_date > l.effective_date);
     updated := updated + c.n;
     companies_updated := companies_updated + 1;
     insert into notifications (company_id, kind, title, body, link)

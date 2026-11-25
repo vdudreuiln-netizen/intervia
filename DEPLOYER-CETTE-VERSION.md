@@ -1,7 +1,9 @@
 # Déployer cette version de ClimDevis — pas à pas
 
-Pour : mettre en production la version « chantier + CERFA + avenants » (mise à jour d'un ClimDevis déjà en ligne).
-Durée : 45 min environ. **Une action par étape, dans l'ordre.**
+Pour : mettre en production la version « chantier + CERFA + avenants + import de tarif personnel »
+(mise à jour d'un ClimDevis déjà en ligne). Durée : 1 h environ. **Une action par étape, dans l'ordre.**
+
+Aucune nouvelle variable Vercel n'est nécessaire pour cette version.
 
 > Vous n'avez encore jamais mis ClimDevis en ligne ? Suivez plutôt `MISE-EN-LIGNE.md` depuis le début :
 > une installation neuve contient déjà toutes les migrations.
@@ -30,8 +32,10 @@ select
   to_regclass('public.catalog_import_changes') is not null as migration_15;
 ```
 
-4. Notez le résultat (« true » = déjà fait, « false » = à faire). Exemple : `true | true | false | false | false | false`
-   → il faudra exécuter la 12, puis la 13, la 14 et la 15.
+4. Notez le résultat (« true » = déjà fait, « false » = à faire). Cas le plus probable pour vous :
+   `true | true | false | false | false | false` (10 et 11 déjà faites). Exemple : `true | true | false | false | false | false`
+   → il faudra exécuter la 12, puis la 13, la 14 et la 15, dans cet ordre.
+   *Si 10 ou 11 affichent aussi « false », exécutez-les d'abord (liens à l'étape 3).*
 
 > **Les migrations 13, 14 et 15 sont obligatoires avec cette version** (13 : avenants, CERFA, pays du compte ;
 > 14 : catalogue commun et remises ; 15 : import de tarif personnel, source des prix, annulation d'import).
@@ -160,13 +164,53 @@ Cochez au fur et à mesure. Utilisez un client fictif à votre nom.
 - [ ] Onglet **Écarts** : **Signaler un écart** (ex. 2 m de liaison en plus), renseignez **Prix HT** et **Coût** (prix ≥ coût) › **Chiffrer**.
 - [ ] Cochez-le › **Préparer l'avenant (1)** › ouvrez le PDF de l'avenant › **Accepté par le client**.
 
-**Import de tarif personnel**
-- [ ] **Catalogue › Importer un tarif** : « Mon distributeur », cochez **Prix publics**, date du tarif, fichier CSV ou Excel.
-      Le résumé affiche nouvelles / mises à jour / en erreur ; s'il y a des erreurs, **Télécharger le rapport d'erreurs**.
-- [ ] **Valider l'import**, puis dans le catalogue : sous chaque prix, « Prix public : Tarif importé du JJ/MM/AAAA ».
-- [ ] Revenez sur **Importer un tarif** : **↶ Annuler le dernier import** remet les prix d'avant.
+**Import de votre vrai tarif distributeur** (voir le détail à l'étape 7)
+- [ ] Import réalisé, résumé cohérent, prix vérifiés sur 5 références, puis test de **↶ Annuler le dernier import**.
 
 **Tableau de bord**
 - [ ] **Accueil** : le chiffre d'affaires signé du mois affiche **Montant initial + Avenants (1) = Total**.
 
 Quand tout est coché : supprimez le client fictif si vous le souhaitez. La version est en production.
+
+---
+
+## Étape 7 — Tester avec le vrai tarif de votre distributeur (20 min)
+
+**Avant de commencer**
+- Gardez le fichier d'origine intact : travaillez sur une copie. Formats acceptés : `.xlsx`, `.csv` (Excel « CSV point-virgule »)
+  ou `.pdf` (lecture automatique, quota de pages). Un `.xls` ancien : ouvrez-le dans Excel et enregistrez-le en `.xlsx`.
+- Regardez dans le fichier si le prix est **public** (« prix public », « tarif », « PPI ») ou **net**
+  (« votre prix », « prix net », « prix remisé ») : c'est la case à cocher à l'étape 1 de l'import.
+- Notez **la date du tarif** (souvent en haut du fichier ou dans son nom) et **5 références** avec leur prix,
+  dont une vendue en couronne ou en boîte si possible.
+
+**Import** (Catalogue › **Importer un tarif**)
+1. « Que contient le fichier ? » : **Accessoires** pour les fournitures (liaisons, goulottes, supports…),
+   **Matériel** pour les unités de climatisation. Un tarif qui mélange les deux : importez-le deux fois, une fois par type.
+2. « D'où vient ce tarif ? » : **Mon distributeur**, choisissez-le (ou **+ Nouveau distributeur**).
+3. Cochez **Prix publics** ou **Prix nets**, saisissez **la date du tarif**, choisissez le fichier › **Suivant**.
+4. **Les colonnes** : vérifiez chaque ligne. Sous chaque choix, l'exemple indique comment la valeur est comprise
+   (ex. « 212,50 → lu comme 212,50 € (prix public) », « couronne de 25 m → 25 m par conditionnement : prix ramené à l'unité »).
+   Corrigez si besoin › **Voir le résumé**.
+5. **Résumé** : nombre de nouvelles références, de mises à jour et de lignes en erreur.
+   S'il y a des erreurs : **⬇ Télécharger le rapport d'erreurs** (s'ouvre dans Excel). Les lignes en erreur sont simplement ignorées.
+6. **Valider l'import**.
+
+**Vérifications**
+- [ ] Catalogue : retrouvez vos 5 références. Sous chaque prix : « Prix public : Tarif importé du JJ/MM/AAAA ».
+- [ ] Une référence en couronne de 25 m : le prix affiché est **au mètre** (prix de la couronne ÷ 25).
+- [ ] Fichier de **prix nets** : le prix d'achat est exactement celui du fichier, sans remise ajoutée.
+- [ ] Fichier de **prix publics** : prix d'achat = prix public × (1 − votre remise sur la marque).
+- [ ] Ré-importez le **même fichier** : le résumé signale « déjà importé », n'affiche que des « inchangés »
+      et le bouton indique « Rien à importer » : aucune référence n'est créée en double.
+- [ ] **Importer un tarif** › **↶ Annuler le dernier import** : les prix reviennent à l'état d'avant.
+      Puis ré-importez-le pour de bon.
+
+**Le retour à me faire**
+- Le nombre de lignes du fichier et le résumé affiché (nouvelles / mises à jour / en erreur).
+- Le **rapport d'erreurs** s'il y en a, et les **intitulés des colonnes** de votre fichier (la première ligne suffit).
+- Les références dont le prix ne correspond pas : prix dans le fichier, prix affiché dans ClimDevis.
+- Ce qui vous a semblé peu clair à l'écran.
+
+*Votre tarif est confidentiel (conditions commerciales) : inutile de m'envoyer le fichier complet,
+les intitulés de colonnes et quelques lignes anonymisées suffisent.*

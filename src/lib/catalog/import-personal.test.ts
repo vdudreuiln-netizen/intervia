@@ -103,8 +103,11 @@ describe("champs reconnus, doublons, rapport d'erreurs", () => {
 });
 
 describe("priorité des prix publics et source affichée", () => {
-  it("tarif commun publié > tarif personnel le plus récent ; source et date", () => {
-    expect(resolvePublicPrice({ cents: 104000, date: "2027-01-01" }, { cents: 99000, supplierId: "s1", date: "2027-02-01", origin: "import" })).toEqual({ cents: 104000, source: "commun", date: "2027-01-01", supplierId: null });
+  it("tarif commun en premier, sauf tarif importé plus récent ; source et date", () => {
+    expect(resolvePublicPrice({ cents: 104000, date: "2027-01-01" }, { cents: 99000, supplierId: "s1", date: "2026-12-01", origin: "import" })).toEqual({ cents: 104000, source: "commun", date: "2027-01-01", supplierId: null });
+    expect(resolvePublicPrice({ cents: 104000, date: "2027-01-01" }, { cents: 106000, supplierId: "s1", date: "2027-01-01", origin: "import" })).toMatchObject({ source: "commun" });
+    expect(resolvePublicPrice({ cents: 104000, date: "2027-01-01" }, { cents: 99000, supplierId: "s1", date: "2027-02-01", origin: "import" })).toEqual({ cents: 99000, source: "personnel_recent", date: "2027-02-01", supplierId: "s1" });
+    expect(priceSourceText("personnel_recent", "2027-02-01")).toBe("Tarif importé plus récent que le tarif commun (tarif du 01/02/2027)");
     expect(resolvePublicPrice(null, { cents: 99000, supplierId: "s1", date: "2026-11-12", origin: "manuel" })).toMatchObject({ source: "manuel" });
     expect(resolvePublicPrice(null, null)).toBeNull();
     expect(priceSourceText("personnel", "2026-03-01")).toBe("Tarif importé du 01/03/2026");

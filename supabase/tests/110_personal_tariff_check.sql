@@ -45,3 +45,25 @@ select undo_last_catalog_import() - 'import_id' as undo1;
 select count(*) as accessory_left from accessories where reference = 'LIA-1438';
 select filename, undone_at is not null as undone from catalog_imports where filename in ('tarif.csv', 'nets.csv') order by created_at;
 reset role;
+
+-- Priorité : tarif commun publié (01/01/2027, 1 040 €) SAUF tarif importé plus récent
+reset role;
+select id as prod from products where reference = 'RXM35R' and company_id = :'ca' \gset
+set role authenticated;
+set request.uid = '11111111-1111-1111-1111-111111111111';
+select apply_reference_prices(jsonb_build_array(jsonb_build_object('id', :'prod', 'public_price_cents', 99000, 'public_price_source', 'personnel', 'public_price_date', '2026-12-01')), '[]'::jsonb);
+select public_price_cents, public_price_source from products where id = :'prod';   -- 104000 commun (import plus ancien)
+select apply_reference_prices(jsonb_build_array(jsonb_build_object('id', :'prod', 'public_price_cents', 99000, 'public_price_source', 'personnel', 'public_price_date', '2027-02-01')), '[]'::jsonb);
+select public_price_cents, public_price_source, public_price_date from products where id = :'prod';   -- 99000 personnel_recent
+-- Un nouveau tarif commun daté AVANT le tarif importé ne l'écrase pas
+insert into supplier_offers (company_id, supplier_id, product_id, manufacturer_ref, public_price_cents, tariff_date, match_status)
+values (current_company_id(), :'sd', :'prod', 'RXM35R', 99000, '2027-02-01', 'certain');
+reset role;
+set role authenticated;
+set request.uid = '99999999-9999-9999-9999-999999999999';
+insert into ref_price_lists (brand_id, effective_date, source_label) select brand_id, '2027-01-15', 'Tarif intermédiaire' from ref_products where manufacturer_ref = 'RXM35R';
+select id as rl2 from ref_price_lists where source_label = 'Tarif intermédiaire' \gset
+insert into ref_prices (price_list_id, ref_product_id, public_price_cents) select :'rl2', id, 110000 from ref_products where manufacturer_ref = 'RXM35R';
+select publish_ref_price_list(:'rl2') as publication2;
+reset role;
+select public_price_cents, public_price_source from products where id = :'prod';   -- toujours 99000 personnel_recent
