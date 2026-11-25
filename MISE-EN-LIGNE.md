@@ -195,10 +195,55 @@ Sans cette clé, tout fonctionne : import Excel / CSV des tarifs, et pièces des
 - Facultatif : `ANTHROPIC_TARIFF_MODEL` et `ANTHROPIC_PLAN_MODEL` pour changer de modèle (par défaut `claude-opus-5-5`).
 - Test : **Catalogue › Importer un tarif**, choisissez un PDF, sélectionnez 2 ou 3 pages de prix, vérifiez les lignes lues puis le résumé.
 
-> Base déjà installée avant les blocs B et A ? Dans Supabase › **SQL Editor**, exécutez une seule fois, dans cet ordre,
-> `supabase/migrations/20261115000010_multi_suppliers.sql`, `supabase/migrations/20261116000011_plans.sql` puis
-> `supabase/migrations/20261117000012_placement_and_site.sql`.
-> Une installation neuve avec `supabase/climdevis-installation.sql` les contient déjà (y compris les espaces de stockage « plans », « datasheets » et « chantier »).
+> Base neuve ? `supabase/climdevis-installation.sql` contient déjà toutes les migrations (y compris les espaces de
+> stockage « plans », « datasheets » et « chantier ») : passez directement à la partie G.
+
+---
+
+## Partie F ter — Mettre à jour une base déjà en service (migrations 10 à 13)
+
+**Toujours sauvegarder AVANT d'exécuter une migration.** Une migration ne s'annule pas d'un clic.
+
+### 1. Sauvegarder (10 min)
+
+1. Supabase › **Database** › **Backups** : notez la date de la dernière sauvegarde automatique quotidienne.
+   Selon votre formule Supabase, elle peut ne pas être téléchargeable : faites donc aussi l'export ci-dessous.
+2. Supabase › bouton **Connect** (en haut) › **Session pooler** : copiez l'adresse de connexion
+   (`postgresql://postgres.xxxx:[MOT-DE-PASSE]@…pooler.supabase.com:5432/postgres`) et remplacez `[MOT-DE-PASSE]`
+   par le « Mot de passe base » (étape 11). Ne collez cette adresse nulle part ailleurs que dans le terminal.
+3. Sur un ordinateur où PostgreSQL est installé (commande `pg_dump`), lancez :
+   ```
+   pg_dump "ADRESSE-COPIÉE" --format=custom --no-owner -f climdevis-avant-migration-13.dump
+   ```
+   Vérifiez que le fichier fait plus de quelques Ko, puis copiez-le hors de l'ordinateur (clé USB, cloud).
+   *Les photos et plans (espaces de stockage) ne sont pas dans ce fichier : ils ne sont pas modifiés par les migrations.*
+4. En cas de problème après la migration, la restauration se fait avec
+   `pg_restore --clean --no-owner -d "ADRESSE-COPIÉE" climdevis-avant-migration-13.dump` (à faire faire par votre développeur).
+
+### 2. Exécuter les migrations manquantes, dans l'ordre, une seule fois
+
+Supabase › **SQL Editor** › **+ New query**, collez le fichier puis **Run** :
+
+| Si votre base a été installée… | Exécutez dans l'ordre |
+|---|---|
+| avant les blocs B et A | `20261115000010_multi_suppliers.sql`, `20261116000011_plans.sql`, `20261117000012_placement_and_site.sql`, `20261125000013_validation_fixes.sql` |
+| avec le bloc A (plans) mais sans le mode chantier | `20261117000012_placement_and_site.sql`, `20261125000013_validation_fixes.sql` |
+| avec le mode chantier (migration 12) | `20261125000013_validation_fixes.sql` |
+
+Tous les fichiers sont dans `supabase/migrations/`. Résultat attendu à chaque fois : « Success. No rows returned ».
+*En cas d'erreur, ne relancez pas : notez le message, gardez la sauvegarde et contactez votre développeur.*
+
+La migration 13 ajoute : les avenants comptés au chiffre d'affaires, les 3 accessoires de fixation d'exemple
+(chevilles chimiques, fixation ITE, support toiture : **vérifiez leurs prix dans Catalogue › Accessoires**), le pays du compte,
+le détecteur de fuite, le SIRET des clients et la numérotation des fiches d'intervention fluides (FI-AAAA-NNNN).
+
+### 3. Compléter vos paramètres
+
+**Paramètres › Règles d'implantation et fiche fluides** : pays (France = CERFA 15497*04), n° d'attestation de capacité,
+détecteur de fuite (identification + date du dernier contrôle). Le tableau « recoupement avec les notices » doit afficher 4 ✔.
+
+> Les plans déjà implantés affichent désormais 2 alertes rouges par unité tant que le **support vérifié** et le
+> **sol dégagé** (unité extérieure) ne sont pas renseignés : c'est voulu.
 
 ---
 
@@ -216,14 +261,28 @@ Sans cette clé, tout fonctionne : import Excel / CSV des tarifs, et pièces des
 69. **Paramètres › Mon équipe** : invitez une deuxième adresse e-mail en **Technicien** et vérifiez
     qu'elle reçoit l'invitation en français et ne voit pas les marges.
 
+### Scénario chantier complet (20 min, à refaire après chaque mise à jour)
+
+70. **Devis** : créez un devis avec une unité murale. Dans l'éditeur, essayez de passer une ligne sous son prix d'achat :
+    le message « aucune ligne ne peut être vendue à perte » doit bloquer. Vérifiez la marge de chaque ligne et du devis.
+71. **Implantation** : importez un plan, placez l'unité intérieure (hauteur de pose 1,8 m ou 1,0 m sous fenêtre) et
+    l'unité extérieure. Choisissez le **support vérifié** (ex. « chevilles chimiques »), cochez **sol dégagé**, validez,
+    puis vérifiez dans le devis que la ligne « Kit de scellement chimique » a été ajoutée.
+72. Marquez le devis **Accepté**, ouvrez **Chantiers** › le chantier.
+73. **Mise en service** : saisissez le n° de série et la charge ajoutée. **CERFA fluides** : vérifiez la charge totale,
+    le tonnage éq. CO2 et la fréquence ; signez (opérateur et détenteur), **Enregistrer**, puis ouvrez le PDF :
+    le numéro FI-AAAA-0001 apparaît et reste le même si vous rouvrez le PDF.
+74. **Écarts** : signalez un écart, chiffrez-le (vente ≥ coût), créez l'avenant, marquez-le **accepté**.
+75. **Tableau de bord** : le chiffre d'affaires signé du mois affiche « Montant initial + Avenants (1) = Total ».
+
 ---
 
 ## Partie H — Passer en réel (le jour du lancement)
 
-70. Dans Stripe, désactivez **Test mode** et refaites les **parties E et F** en mode réel
+76. Dans Stripe, désactivez **Test mode** et refaites les **parties E et F** en mode réel
     (les prix, le webhook et les clés sont différents en réel : `sk_live_…`, nouveaux `price_…`, nouveau `whsec_…`).
-71. Dans Vercel, remplacez les valeurs Stripe par les valeurs réelles, puis **Redeploy** (étape 60).
-72. Facultatif : achetez un nom de domaine et ajoutez-le dans Vercel › **Settings** › **Domains** › **Add**,
+77. Dans Vercel, remplacez les valeurs Stripe par les valeurs réelles, puis **Redeploy** (étape 60).
+78. Facultatif : achetez un nom de domaine et ajoutez-le dans Vercel › **Settings** › **Domains** › **Add**,
     puis mettez à jour `NEXT_PUBLIC_APP_URL` (étape 33), l'adresse Supabase (étapes 35-36) et l'URL du webhook Stripe (étape 53).
 
 ---

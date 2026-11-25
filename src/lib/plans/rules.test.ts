@@ -52,10 +52,11 @@ describe("surface minimale R32 (IEC 60335-2-40, annexe GG)", () => {
     expect(minRoomArea(1.8, "R32", 1.8)).toBeNull();
     expect(minRoomArea(5, "R410A", 1.8)).toBeNull(); // non inflammable
   });
-  it("A_min = (m / (2,5 × LFL^1,25 × h0))²", () => {
-    expect(minRoomArea(2.5, "R32", 1.8)).toBe(5.9);
-    expect(minRoomArea(2.5, "R32", 0.6)).toBe(53.2); // console au sol : beaucoup plus exigeant
-    expect(minRoomArea(2.5, "R32", 2.2)).toBe(4);
+  it("A_min = max((m / (2,5 × LFL^1,25 × h0))², 3 m²/kg), arrondi au m² supérieur", () => {
+    expect(minRoomArea(2.5, "R32", 1.8)).toBe(8); // IEC 5,9 m² ; plancher de prudence 7,5 m²
+    expect(minRoomArea(2.5, "R32", 0.6)).toBe(54); // console au sol : IEC 53,2 m²
+    expect(minRoomArea(2.5, "R32", 2.2)).toBe(8); // IEC 4,0 m²
+    expect(minRoomArea(6, "R32", 1.8)).toBe(35); // IEC 34,0 m²
   });
   it("charge totale = usine + complément au-delà de la longueur pré-chargée", () => {
     expect(systemChargeKg(1.4, 10, 15, 20)).toBe(1.4);
@@ -66,7 +67,8 @@ describe("surface minimale R32 (IEC 60335-2-40, annexe GG)", () => {
     const f = evaluateRules(c).filter((x) => x.ruleId === "r32_surface");
     expect(f).toHaveLength(1);
     expect(f[0]!.message).toContain("Chambre fait 9 m²");
-    expect(f[0]!.message).toContain("9,7 m²");
+    expect(f[0]!.message).toContain("au moins 10 m²");
+    expect(f[0]!.message).toContain("à confirmer avec la notice du fabricant");
   });
 });
 
@@ -186,5 +188,29 @@ describe("suggestions d'emplacement", () => {
     const all = evaluateRules(ctx({ markers: [placed, ...added.map((m) => ({ ...m, gapCm: 20, support: "mur_plein" as const, confirmed: ["degagements", "sol_degage"] }))], routes: [] }));
     expect(all.filter((f) => f.severity === "rouge").map((f) => f.ruleId).filter((r) => r !== "condensats")).toEqual([]);
     expect(suggestMissing(sctx([placed]), new Set(["ue:s1", "ui:i2"]))).toEqual([]);
+  });
+});
+
+import { runR32CrossCheck } from "./r32-crosscheck";
+
+describe("R32 : recoupement avec les notices Daikin et Mitsubishi Electric", () => {
+  it("4 cas : ClimDevis égal ou plus prudent que la notice", () => {
+    const r = runR32CrossCheck();
+    expect(r).toHaveLength(4);
+    expect(r.map((x) => [x.chargeKg, x.heightM, x.noticeM2, x.climdevisM2])).toEqual([
+      [2, 1.8, 6, 6],
+      [5, 1.8, 24, 24],
+      [7, 1.8, 47, 47],
+      [2.4, 2.2, 4.74, 8],
+    ]);
+    expect(r.every((x) => x.ok)).toBe(true);
+  });
+  it("hauteur 1,0 m (allège) : entre le sol et le mural", () => {
+    const a06 = minRoomArea(3, "R32", 0.6)!;
+    const a10 = minRoomArea(3, "R32", 1.0)!;
+    const a18 = minRoomArea(3, "R32", 1.8)!;
+    expect(a10).toBeLessThan(a06);
+    expect(a10).toBeGreaterThan(a18);
+    expect(a10).toBe(28); // (3 / (2,5 × 0,307^1,25 × 1,0))² = 27,6 → 28 m²
   });
 });

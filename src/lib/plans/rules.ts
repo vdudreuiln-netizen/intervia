@@ -7,9 +7,12 @@
  *
  * Surface minimale R32 : formule de l'annexe GG de l'IEC 60335-2-40
  *   A_min = ( m / (2,5 × LFL^(5/4) × h0) )²
- * avec LFL = 0,307 kg/m³ (R32), h0 = hauteur de pose (sol 0,6 m, mural 1,8 m,
- * plafond 2,2 m). En dessous du seuil m1 = 6 m³ × LFL (≈ 1,84 kg) aucune
- * surface minimale n'est imposée. La notice du fabricant prime toujours.
+ * avec LFL = 0,307 kg/m³ (R32), h0 = hauteur de pose (sol 0,6 m, allège 1,0 m,
+ * mural 1,8 m, plafond 2,2 m). En dessous du seuil m1 = 6 m³ × LFL (≈ 1,84 kg)
+ * aucune surface minimale n'est imposée.
+ * Par prudence (recoupement avec les tableaux des notices Daikin et Mitsubishi
+ * Electric, voir r32-crosscheck.ts) : jamais moins de 3 m² par kg de fluide,
+ * arrondi au m² supérieur. La notice du fabricant prime toujours.
  */
 import type { ProductType } from "@/lib/catalog/import";
 import type { Equipment } from "@/lib/quote/types";
@@ -104,6 +107,16 @@ const isOn = (s: RuleSettings, id: RuleId) => s.enabled[id] !== false;
 /** Limite inférieure d'inflammabilité (kg/m³). */
 export const LFL: Record<string, number> = { R32: 0.307, R454B: 0.296 };
 export const INSTALL_HEIGHT_M: Partial<Record<ProductType, number>> = { ui_console: 0.6, ui_murale: 1.8, ui_cassette: 2.2, ui_gainable: 2.2 };
+/** Hauteurs de pose proposées (m) pour le calcul de surface minimale. */
+export const POSE_HEIGHTS: { value: number; label: string }[] = [
+  { value: 0.6, label: "0,6 m – au sol (console)" },
+  { value: 1.0, label: "1,0 m – allège, sous fenêtre" },
+  { value: 1.8, label: "1,8 m – murale" },
+  { value: 2.2, label: "2,2 m – plafond (cassette, gainable)" },
+];
+export const R32_WARNING = "Calcul indicatif selon IEC 60335-2-40, à confirmer avec la notice du fabricant.";
+/** Plancher de prudence : surface mini par kg de fluide (m²/kg). */
+export const MIN_AREA_PER_KG = 3;
 
 /** Charge totale du système : charge usine + complément au-delà de la longueur pré-chargée. */
 export function systemChargeKg(factoryKg: number, totalLinkM: number, prechargedM: number | null, gPerM: number | null): number {
@@ -117,7 +130,8 @@ export function minRoomArea(chargeKg: number, refrigerant: string, h0: number): 
   if (!lfl) return null;
   const m1 = 6 * lfl;
   if (chargeKg <= m1) return null;
-  return Math.round((chargeKg / (2.5 * Math.pow(lfl, 1.25) * h0)) ** 2 * 10) / 10;
+  const iec = (chargeKg / (2.5 * Math.pow(lfl, 1.25) * h0)) ** 2;
+  return Math.ceil(Math.max(iec, MIN_AREA_PER_KG * chargeKg) - 1e-9);
 }
 
 // ---------------------------------------------------------------------------
@@ -299,14 +313,14 @@ export function evaluateRules(ctx: RuleContext): Finding[] {
       } else {
         const charge = systemChargeKg(ueTech.factoryChargeKg, linkKnown ? totalLink : 0, sys.outdoor.prechargedLengthM, sys.outdoor.extraChargeGPerM);
         for (const ind of sys.indoors) {
-          const h0 = INSTALL_HEIGHT_M[ind.product.type] ?? 1.8;
+          const h0 = find("ui", ind.key)?.marker.poseHeightM ?? INSTALL_HEIGHT_M[ind.product.type] ?? 1.8;
           const amin = minRoomArea(charge, ueTech.refrigerant, h0);
           if (amin === null) continue;
           const served = ind.roomIds.map((id) => ctx.rooms.find((r) => r.id === id)).filter(Boolean) as RuleContext["rooms"];
           const smallest = served.sort((a, b) => a.surfaceM2 - b.surfaceM2)[0];
           const el = find("ui", ind.key)?.marker.id ?? ind.key;
           if (smallest && smallest.surfaceM2 < amin) {
-            push({ ruleId: "r32_surface", elementId: el, message: `${tags.indoor.get(ind.key)} : ${smallest.name} fait ${fmt(smallest.surfaceM2)} m², il faut au moins ${fmt(amin)} m² pour ${fmt(charge, 2)} kg de ${ueTech.refrigerant} (pose à ${fmt(h0)} m, IEC 60335-2-40).` });
+            push({ ruleId: "r32_surface", elementId: el, message: `${tags.indoor.get(ind.key)} : ${smallest.name} fait ${fmt(smallest.surfaceM2)} m², il faut au moins ${fmt(amin)} m² pour ${fmt(charge, 2)} kg de ${ueTech.refrigerant} (pose à ${fmt(h0)} m). ${R32_WARNING}` });
           }
         }
       }

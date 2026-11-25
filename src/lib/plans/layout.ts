@@ -42,6 +42,8 @@ export interface Marker {
   suggested?: boolean;
   /** Unité intérieure : distance sous le plafond, en cm. */
   gapCm?: number;
+  /** Unité intérieure : hauteur de pose (m) retenue pour la surface minimale R32. */
+  poseHeightM?: number;
   /** Unité extérieure : type de pose. */
   mount?: UeMount;
   /** Évacuation : hauteur de l'entrée d'eau au-dessus du sol, en m. */
@@ -267,6 +269,7 @@ export function sanitizeLayout(raw: unknown, size: { width: number; height: numb
         if (m.suggested) out.suggested = true;
         const gap = num(m.gapCm, 0, 200);
         if (gap !== undefined) out.gapCm = gap;
+        if (typeof m.poseHeightM === "number" && [0.6, 1.0, 1.8, 2.2].includes(m.poseHeightM)) out.poseHeightM = m.poseHeightM;
         if (typeof m.mount === "string" && mounts.has(m.mount)) out.mount = m.mount;
         const h = num(m.heightM, 0, 10);
         if (h !== undefined) out.heightM = h;

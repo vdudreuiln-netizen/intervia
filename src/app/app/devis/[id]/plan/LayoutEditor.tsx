@@ -6,7 +6,7 @@ import { Button, Card, Field, LinkButton, Notice, Select } from "@/components/ui
 import { decimalToInput, parseDecimal } from "@/lib/format";
 import type { Pt } from "@/lib/plans/geometry";
 import { CONTEXT_MARKERS, equipmentTags, MARKER_LABELS, markerTag, ROUTE_COLORS, ROUTE_LABELS, routeLengthM, SUPPORT_LABELS, SUPPORTS_UE, SUPPORTS_UI, type Layout, type SupportKind, type Marker, type MarkerKind, type MetreReportLine, type RouteKind, type UeMount } from "@/lib/plans/layout";
-import { blocking, dirOf, evaluateRules, type Finding, type RuleContext } from "@/lib/plans/rules";
+import { blocking, dirOf, evaluateRules, INSTALL_HEIGHT_M, POSE_HEIGHTS, R32_WARNING, type Finding, type RuleContext } from "@/lib/plans/rules";
 import { suggestDucted, suggestIndoor, suggestMissing, suggestOutdoor, type SuggestContext } from "@/lib/plans/suggest";
 import { saveLayout } from "./actions";
 import { NorthArrow, PlanCanvas, unit } from "./PlanCanvas";
@@ -290,6 +290,13 @@ export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg
                   ⟳ Soufflage
                 </Button>
               </div>
+              <Select
+                label="Hauteur de pose (surface minimale R32)"
+                value={String(sel.poseHeightM ?? INSTALL_HEIGHT_M[indoors.find((i) => i.key === sel.equipmentKey)?.product.type ?? "ui_murale"] ?? 1.8)}
+                onChange={(v) => patch(sel.id, { poseHeightM: Number(v) })}
+                options={POSE_HEIGHTS.map((h) => ({ value: String(h.value), label: h.label }))}
+                hint={R32_WARNING}
+              />
               <Field label="Distance sous le plafond" inputMode="numeric" suffix="cm" value={sel.gapCm === undefined ? "" : String(sel.gapCm)} onChange={(v) => patch(sel.id, { gapCm: v.trim() === "" ? undefined : Math.max(0, Math.min(200, Math.round(parseDecimal(v) ?? 0))) })} hint="Selon la notice du fabricant" />
             </>
           )}
