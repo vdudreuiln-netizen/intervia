@@ -1,10 +1,10 @@
 /**
- * PDF du mode chantier : procès-verbal de réception (avec photos), fiche
- * fluides préremplie, avenant au devis. Aucun coût ni marge n'arrive ici.
+ * PDF du mode chantier : procès-verbal de réception (avec photos), avenant
+ * au devis (la fiche fluides CERFA est dans CerfaPdf.tsx). Aucun coût ni marge n'arrive ici.
  */
 import { Document, Image, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import { pdfEuros } from "@/lib/pdf/QuotePdf";
-import { RECEPTION_LEGAL, type Amendment, type FluidForm } from "./site";
+import { RECEPTION_LEGAL, type Amendment } from "./site";
 
 const C = { ink: "#111827", muted: "#4B5563", line: "#D1D5DB", brand: "#0B4F8A", light: "#E6F0FA" };
 const clean = (v: string) => v.replace(/[  ]/g, " ").replace(/[→]/g, "->");
@@ -138,59 +138,6 @@ export function ReceptionPdf({
           </View>
         </Page>
       )}
-    </Document>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Fiche fluides préremplie
-// ---------------------------------------------------------------------------
-function Rows({ rows }: { rows: { label: string; value: string }[] }) {
-  return (
-    <>
-      {rows.map((r) => (
-        <View key={r.label} style={s.row} wrap={false}>
-          <Text style={{ width: 190, color: C.muted }}>{clean(r.label)}</Text>
-          <Text style={[{ flex: 1 }, r.value.startsWith("à compléter") ? { color: "#B91C1C" } : s.bold]}>{clean(r.value)}</Text>
-        </View>
-      ))}
-    </>
-  );
-}
-
-export function FluidPdf({ form, company, quoteNumber }: { form: FluidForm; company: string; quoteNumber: string }) {
-  return (
-    <Document title={`Fiche fluides ${quoteNumber}`} author={company} subject="Fiche d'intervention fluides frigorigènes" language="fr-FR">
-      <Page size="A4" style={s.page}>
-        <Footer left={`${company} · Fiche fluides`} right={`Devis ${quoteNumber}`} />
-        <Text style={s.title}>FICHE D&apos;INTERVENTION – FLUIDES FRIGORIGÈNES</Text>
-        <Text style={s.muted}>Données préremplies depuis le devis et la mise en service, à reporter sur le formulaire officiel CERFA n° 15497*04. En rouge : à compléter.</Text>
-        <Text style={s.h2}>Opérateur</Text>
-        <Rows rows={form.operator} />
-        <Text style={s.h2}>Détenteur de l&apos;équipement</Text>
-        <Rows rows={form.holder} />
-        {form.systems.map((sys) => (
-          <View key={sys.tag}>
-            <Text style={s.h2}>Équipement {sys.tag}</Text>
-            <Rows rows={sys.rows} />
-          </View>
-        ))}
-        <Text style={s.h2}>Intervention</Text>
-        <Rows rows={form.intervention} />
-        {form.notes.map((n) => (
-          <Text key={n} style={{ marginTop: 6 }}>
-            {clean(n)}
-          </Text>
-        ))}
-        <View style={[s.boxes, { marginTop: 14 }]} wrap={false}>
-          <View style={[s.sign, { minHeight: 80 }]}>
-            <Text style={s.label}>Signature de l&apos;opérateur</Text>
-          </View>
-          <View style={[s.sign, { minHeight: 80 }]}>
-            <Text style={s.label}>Signature du détenteur</Text>
-          </View>
-        </View>
-      </Page>
     </Document>
   );
 }

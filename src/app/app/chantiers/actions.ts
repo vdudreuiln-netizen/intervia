@@ -6,6 +6,7 @@ import { readOnlyError } from "@/lib/billing/guard";
 import { loadQuote } from "@/lib/quote/load";
 import { costAccess } from "@/lib/security/costs";
 import { computeDeviation, pricingSettingsOf } from "@/lib/site/load.server";
+import { sanitizeSignature, sanitizeSystemInput, validateSystemInput, type CerfaInput, type CerfaSystemInput } from "@/lib/site/cerfa";
 import { buildAmendment, validateReception, type Checks, type DevLine, type DeviationKind, type Values } from "@/lib/site/site";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -199,6 +200,34 @@ export async function saveCommissioning(quoteId: string, values: Values): Promis
   if (error) return { ok: false, message: FAIL };
   done(quoteId);
   return { ok: true, message: "Relevés enregistrés ✔" };
+}
+
+/**
+ * 4 bis. Fiche d'intervention fluides (CERFA 15497*04) : saisie par équipement,
+ * signatures de l'opérateur et du détenteur, SIRET du détenteur (facultatif).
+ */
+export async function saveFluidForm(quoteId: string, raw: { systems: Record<string, unknown>; operatorSign: unknown; holderSign: unknown; holderSiret: string }): Promise<Result> {
+  const c = await ctx(quoteId);
+  if ("error" in c) return c.error!;
+  const systems: Record<string, CerfaSystemInput> = {};
+  for (const [k, v] of Object.entries(raw.systems ?? {}).slice(0, 20)) {
+    if (!/^[\w:.-]{1,60}$/.test(k)) continue;
+    const clean = sanitizeSystemInput(v);
+    const problem = validateSystemInput(clean);
+    if (problem) return { ok: false, message: problem };
+    systems[k] = clean;
+  }
+  const own = (b: ReturnType<typeof sanitizeSignature>) => (b && b.signaturePath && !b.signaturePath.startsWith(`${c.a.companyId}/${quoteId}/`) ? { ...b, signaturePath: null } : b);
+  const siret = raw.holderSiret.replace(/\s/g, "");
+  if (siret && !/^[0-9]{14}$/.test(siret)) return { ok: false, message: "SIRET du détenteur : 14 chiffres (laisser vide pour un particulier)." };
+  const prev = (c.job?.fluid_form as CerfaInput | null) ?? { systems: {} };
+  const next: CerfaInput = { ...(prev.number ? { number: prev.number } : {}), systems, operatorSign: own(sanitizeSignature(raw.operatorSign)), holderSign: own(sanitizeSignature(raw.holderSign)) };
+  const now = new Date().toISOString();
+  const { error } = await c.a.supabase.from("site_jobs").upsert({ quote_id: quoteId, company_id: c.a.companyId, fluid_form: next, status: c.job?.status ?? "en_cours", started_at: c.job?.started_at ?? now, updated_at: now });
+  if (error) return { ok: false, message: FAIL };
+  const { error: e2 } = await c.a.supabase.from("clients").update({ siret: siret || null }).eq("id", c.q.project.client.id);
+  done(quoteId);
+  return { ok: true, message: e2 ? "Fiche enregistrée ✔ (SIRET du détenteur non modifié : droits insuffisants)" : "Fiche fluides enregistrée ✔" };
 }
 
 /** 5. Procès-verbal de réception signé par le client sur le téléphone. */

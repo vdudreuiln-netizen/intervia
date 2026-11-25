@@ -4,7 +4,6 @@ import { EMPTY_METRE, type CatAccessory, type CatProduct, type Equipment } from 
 import type { Layout } from "@/lib/plans/layout";
 import {
   buildAmendment,
-  buildFluidForm,
   checkCommissioning,
   commissioningSections,
   deviationCosts,
@@ -102,25 +101,6 @@ describe("mise en service", () => {
     expect(r.missing).toEqual(["E1 : N° de série de l'unité extérieure"]);
     expect(r.errors[0]).toContain("azote n'a pas tenu");
     expect(r.warnings).toHaveLength(2);
-  });
-  it("fiche fluides préremplie : charge totale et tonnage équivalent CO2", () => {
-    const f = buildFluidForm({
-      company: { name: "Clim Test", address: "1 rue A, 33000 Bordeaux", siret: "12345678900011", capacityNumber: "AC-123" },
-      client: { name: "M. Martin", address: "3 allée des Pins, 33600 Pessac" },
-      equipment,
-      tech: { ue: { refrigerant: "R32", factoryChargeKg: 0.95, maxLinkM: 20, maxHeightDiffM: 10, clearances: {} } },
-      values: ok,
-    });
-    const row = (l: string) => f.systems[0]!.rows.find((r) => r.label === l)!.value;
-    expect(row("Fluide vierge ajouté")).toBe("0,14 kg");
-    expect(row("Charge totale de l'équipement")).toBe("1,09 kg");
-    expect(row("Tonnage équivalent CO2")).toBe("0,74 t éq. CO2 (PRG 675)");
-    expect(row("Contrôle d'étanchéité")).toContain("aucune fuite");
-    expect(f.operator.find((r) => r.label.includes("attestation"))!.value).toBe("AC-123");
-    expect(f.notes).toHaveLength(1);
-    const big = buildFluidForm({ company: { name: "x", address: "", siret: null, capacityNumber: null }, client: { name: "y", address: "" }, equipment, tech: { ue: { refrigerant: "R32", factoryChargeKg: 7.5, maxLinkM: null, maxHeightDiffM: null, clearances: {} } }, values: ok });
-    expect(big.notes.join(" ")).toContain("contrôle d'étanchéité périodique");
-    expect(big.operator.find((r) => r.label.includes("attestation"))!.value).toContain("à compléter");
   });
 });
 

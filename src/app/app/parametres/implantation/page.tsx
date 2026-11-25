@@ -15,9 +15,9 @@ export default async function PlacementRulesPage() {
       <Link href="/app/parametres" className="text-lg font-bold text-brand underline underline-offset-4">
         ← Paramètres
       </Link>
-      <h1 className="text-3xl font-extrabold">Règles d&apos;implantation</h1>
+      <h1 className="text-3xl font-extrabold">Règles d&apos;implantation et fiche fluides</h1>
       <p className="text-lg text-slate-700">Contrôles appliqués quand vous placez le matériel sur le plan. Impératif : à corriger, ou à forcer avec un motif. Préférence : simple conseil. La notice du fabricant prime toujours.</p>
-      <RulesForm initial={ruleSettings(company.placement_rules)} capacityNumber={company.fluid_capacity_number ?? ""} />
+      <RulesForm initial={ruleSettings(company.placement_rules)} fluid={{ country: company.country ?? "FR", capacityNumber: company.fluid_capacity_number ?? "", leakDetectorId: company.leak_detector_id ?? "", leakDetectorCheckedOn: company.leak_detector_checked_on ?? "" }} />
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
 } from "@/lib/site/site";
 import { canvasToJpeg, imageFileToCanvas } from "../../devis/[id]/plan/PlanUpload";
 import { PlanCanvas, unit } from "../../devis/[id]/plan/PlanCanvas";
+import { FluidFormTab, type FluidView } from "./FluidFormTab";
 import { addPhoto, decideAmendment, decideDeviations, deletePhoto, priceDeviation, reportDeviation, saveCommissioning, saveReception, setCheck } from "../actions";
 
 export interface PlanView {
@@ -79,9 +80,10 @@ interface Props {
   isAdmin: boolean;
   showCosts: boolean;
   clientName: string;
+  fluid: FluidView;
 }
 
-type Tab = "pose" | "photos" | "ecarts" | "mes" | "reception";
+type Tab = "pose" | "photos" | "ecarts" | "mes" | "fluides" | "reception";
 const PHOTO_KINDS: Record<string, string> = { avant: "Avant", apres: "Après", passage: "Passage de mur", etiquette: "Étiquette / n° de série", autre: "Autre" };
 type Msg = { ok: boolean; text: string } | null;
 
@@ -106,6 +108,7 @@ export function SiteJob(p: Props) {
     ["photos", `Photos (${p.photos.length})`],
     ["ecarts", `Écarts${pending ? ` (${pending})` : ""}`],
     ["mes", "Mise en service"],
+    ["fluides", p.fluid.country === "FR" ? "CERFA fluides" : "Fiche fluides"],
     ["reception", "Réception"],
   ];
   return (
@@ -125,6 +128,7 @@ export function SiteJob(p: Props) {
       {tab === "photos" && <Photos {...p} busy={busy} run={run} setMsg={setMsg} />}
       {tab === "ecarts" && <Deviations {...p} busy={busy} run={run} />}
       {tab === "mes" && <Commissioning {...p} busy={busy} run={run} />}
+      {tab === "fluides" && <FluidFormTab quoteId={p.quoteId} companyId={p.companyId} fluid={p.fluid} busy={busy} run={run} setMsg={setMsg} />}
       {tab === "reception" && <ReceptionTab {...p} busy={busy} run={run} setMsg={setMsg} />}
     </div>
   );
@@ -467,10 +471,7 @@ function Commissioning({ quoteId, sections, values, commissioningCheck: chk, bus
       ) : (
         chk.complete && <Notice tone="ok">Mise en service complète ✔</Notice>
       )}
-      <a href={`/app/chantiers/${quoteId}/fluides`} target="_blank" rel="noopener" className="flex min-h-14 items-center justify-center rounded-xl border-2 border-brand bg-white px-4 text-center text-lg font-bold text-brand">
-        Fiche fluides préremplie (PDF)
-      </a>
-      <p className="text-sm text-slate-600">Données à reporter sur le CERFA 15497*04 (charge totale, tonnage équivalent CO2, contrôle d&apos;étanchéité), à signer par l&apos;opérateur et le client.</p>
+      <p className="text-base text-slate-700">Le n° de série et la charge ajoutée saisis ici remplissent la fiche d&apos;intervention fluides (onglet suivant).</p>
     </div>
   );
 }

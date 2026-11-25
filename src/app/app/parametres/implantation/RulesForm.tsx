@@ -1,14 +1,16 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Button, Card, Field, Notice } from "@/components/ui";
+import { Button, Card, Field, Notice, Select } from "@/components/ui";
 import { decimalToInput, parseDecimal } from "@/lib/format";
 import { RULES, type RuleId, type RuleSettings } from "@/lib/plans/rules";
-import { savePlacementRules } from "./actions";
+import { savePlacementRules, type FluidSettings } from "./actions";
 
-export function RulesForm({ initial, capacityNumber }: { initial: RuleSettings; capacityNumber: string }) {
+const COUNTRIES: Record<string, string> = { FR: "France (CERFA 15497*04)", BE: "Belgique", LU: "Luxembourg", CH: "Suisse", ES: "Espagne", DE: "Allemagne", AT: "Autriche", IT: "Italie", PT: "Portugal", NL: "Pays-Bas", IE: "Irlande", GB: "Royaume-Uni", autre: "Autre pays" };
+
+export function RulesForm({ initial, fluid: initialFluid }: { initial: RuleSettings; fluid: FluidSettings }) {
   const [s, setS] = useState(initial);
-  const [cap, setCap] = useState(capacityNumber);
+  const [fluid, setFluid] = useState<FluidSettings>(initialFluid);
   const [text, setText] = useState({ heat: decimalToInput(initial.heatDistanceM), bed: decimalToInput(initial.bedDistanceM), slope: decimalToInput(initial.condensateSlope * 100), level: decimalToInput(initial.levelHeightM) });
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, start] = useTransition();
@@ -33,7 +35,11 @@ export function RulesForm({ initial, capacityNumber }: { initial: RuleSettings; 
         </div>
       </Card>
       <Card title="Fluides frigorigènes">
-        <Field label="N° d'attestation de capacité" value={cap} onChange={setCap} hint="Repris sur la fiche d'intervention fluides du mode chantier" />
+        <Select label="Pays d'exercice" value={fluid.country} onChange={(v) => setFluid({ ...fluid, country: v })} options={Object.entries(COUNTRIES).map(([value, label]) => ({ value, label }))} />
+        <p className="text-sm text-slate-600">France : formulaire officiel CERFA 15497*04 pré-rempli. Autres pays : fiche d&apos;intervention générique avec les mêmes données (règlement (UE) 2024/573).</p>
+        <Field label="N° d'attestation de capacité" value={fluid.capacityNumber} onChange={(v) => setFluid({ ...fluid, capacityNumber: v })} hint="Cadre [1] de la fiche. Sans ce numéro, la fiche signale qu'elle doit être signée par un opérateur attesté." />
+        <Field label="Détecteur manuel de fuite (marque, modèle, n°)" value={fluid.leakDetectorId} onChange={(v) => setFluid({ ...fluid, leakDetectorId: v })} hint="Cadre [5]" />
+        <Field label="Date du dernier contrôle du détecteur" type="date" value={fluid.leakDetectorCheckedOn} onChange={(v) => setFluid({ ...fluid, leakDetectorCheckedOn: v })} />
       </Card>
       {msg && <Notice tone={msg.ok ? "ok" : "danger"}>{msg.text}</Notice>}
       <Button
@@ -42,7 +48,7 @@ export function RulesForm({ initial, capacityNumber }: { initial: RuleSettings; 
         disabled={busy}
         onClick={() =>
           start(async () => {
-            const r = await savePlacementRules({ ...s, heatDistanceM: parseDecimal(text.heat) ?? NaN, bedDistanceM: parseDecimal(text.bed) ?? NaN, condensateSlope: (parseDecimal(text.slope) ?? NaN) / 100, levelHeightM: parseDecimal(text.level) ?? NaN }, cap);
+            const r = await savePlacementRules({ ...s, heatDistanceM: parseDecimal(text.heat) ?? NaN, bedDistanceM: parseDecimal(text.bed) ?? NaN, condensateSlope: (parseDecimal(text.slope) ?? NaN) / 100, levelHeightM: parseDecimal(text.level) ?? NaN }, fluid);
             setMsg({ ok: r.ok, text: r.message });
           })
         }

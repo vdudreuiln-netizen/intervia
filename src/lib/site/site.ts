@@ -240,8 +240,6 @@ export function commissioningSections(eq: Equipment, metre: Metre): Commissionin
     fields: [
       { id: "date", label: "Date de la mise en service", type: "date", required: true },
       { id: "operateur", label: "Technicien (nom)", type: "text", required: true },
-      { id: "detecteur_id", label: "Détecteur de fuite : identification", type: "text", required: false },
-      { id: "detecteur_date", label: "Détecteur de fuite : dernier contrôle", type: "date", required: false },
     ],
   });
   return out;
@@ -287,86 +285,6 @@ export function checkCommissioning(sections: CommissioningSection[], v: Values, 
     }
   }
   return { complete: missing.length === 0 && errors.length === 0, missing, errors, warnings };
-}
-
-/** Potentiel de réchauffement global (PRG, 4e rapport du GIEC, règlement F-Gaz). */
-export const GWP: Record<string, number> = { R32: 675, R410A: 2088, R454B: 466, R290: 3 };
-
-export interface FluidFormSystem {
-  tag: string;
-  rows: { label: string; value: string }[];
-}
-
-export interface FluidForm {
-  operator: { label: string; value: string }[];
-  holder: { label: string; value: string }[];
-  systems: FluidFormSystem[];
-  intervention: { label: string; value: string }[];
-  notes: string[];
-}
-
-const kg = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} kg`;
-const or = (v: string | null | undefined, d = "à compléter") => (v && v.trim() ? v.trim() : d);
-
-/**
- * Données de la fiche d'intervention fluides, préremplies depuis le devis et la
- * mise en service, à reporter sur le formulaire CERFA 15497*04.
- */
-export function buildFluidForm(input: {
-  company: { name: string; address: string; siret: string | null; capacityNumber: string | null };
-  client: { name: string; address: string };
-  equipment: Equipment;
-  tech: Record<string, UnitTech>;
-  values: Values;
-}): FluidForm {
-  const tags = equipmentTags(input.equipment);
-  const v = input.values;
-  const systems: FluidFormSystem[] = input.equipment.systems.map((s) => {
-    const t = input.tech[s.outdoor.id];
-    const added = numOf(v[`${s.key}.charge_g`]);
-    const total = t?.factoryChargeKg != null ? systemChargeKg(t.factoryChargeKg, 0, null, null) + (added ?? 0) / 1000 : null;
-    const gwp = t?.refrigerant ? GWP[t.refrigerant] : undefined;
-    return {
-      tag: tags.outdoor.get(s.key)!,
-      rows: [
-        { label: "Équipement", value: `Climatisation réversible ${s.outdoor.brandName} ${s.outdoor.reference}` },
-        { label: "N° de série", value: or(v[`${s.key}.serial`]) },
-        { label: "Fluide frigorigène", value: or(t?.refrigerant ?? null) },
-        { label: "Charge usine", value: t?.factoryChargeKg != null ? kg(t.factoryChargeKg) : "à compléter" },
-        { label: "Fluide vierge ajouté", value: added === null ? "à compléter" : kg(added / 1000) },
-        { label: "Charge totale de l'équipement", value: total === null ? "à compléter" : kg(Math.round(total * 1000) / 1000) },
-        { label: "Tonnage équivalent CO2", value: total === null || gwp === undefined ? "à compléter" : `${((total * gwp) / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} t éq. CO2 (PRG ${gwp})` },
-        { label: "Fluide récupéré", value: "0 kg (installation neuve)" },
-        { label: "Contrôle d'étanchéité", value: v[`${s.key}.n2_ok`] === "oui" ? `Azote ${or(v[`${s.key}.n2_bar`], "?")} bar pendant ${or(v[`${s.key}.n2_min`], "?")} min : aucune fuite constatée` : v[`${s.key}.n2_ok`] === "non" ? "FUITE CONSTATÉE" : "à compléter" },
-      ],
-    };
-  });
-  const notes = ["Fiche à signer par l'opérateur et le détenteur, à conserver 5 ans par chacun."];
-  for (const s of systems) {
-    const t = s.rows.find((r) => r.label === "Tonnage équivalent CO2")?.value ?? "";
-    const n = Number(t.split(" ")[0]?.replace(",", "."));
-    if (Number.isFinite(n) && n >= 5) notes.push(`${s.tag} : 5 t éq. CO2 ou plus — contrôle d'étanchéité périodique obligatoire, à rappeler au client.`);
-  }
-  return {
-    operator: [
-      { label: "Opérateur", value: input.company.name },
-      { label: "Adresse", value: or(input.company.address) },
-      { label: "SIRET", value: or(input.company.siret) },
-      { label: "N° d'attestation de capacité", value: or(input.company.capacityNumber, "à compléter (Paramètres › Règles d'implantation)") },
-      { label: "Intervenant", value: or(v.operateur) },
-    ],
-    holder: [
-      { label: "Détenteur", value: input.client.name },
-      { label: "Adresse de l'équipement", value: or(input.client.address) },
-    ],
-    systems,
-    intervention: [
-      { label: "Nature de l'intervention", value: "Assemblage et mise en service de l'équipement" },
-      { label: "Date", value: or(v.date) },
-      { label: "Détecteur de fuite", value: v.detecteur_id ? `${v.detecteur_id}${v.detecteur_date ? `, contrôlé le ${v.detecteur_date}` : ""}` : "à compléter" },
-    ],
-    notes,
-  };
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import { loadRuleContext } from "@/lib/plans/rules.server";
 import { costAccess } from "@/lib/security/costs";
 import { checkCommissioning, commissioningSections, siteItems, type Checks, type DevLine, type DeviationKind, type DeviationStatus, type JobStatus, type Reception, type Values } from "@/lib/site/site";
 import { SiteJob, type DeviationView, type PhotoView, type PlanView } from "./SiteJob";
+import { buildCerfaSheets, type CerfaInput } from "@/lib/site/cerfa";
 
 export const metadata: Metadata = { title: "Chantier" };
 
@@ -39,13 +40,14 @@ export default async function SiteJobPage({ params }: { params: Promise<{ id: st
       </div>
     );
   }
-  const [{ data: job }, { data: photoRows }, { data: devRows }, { data: accessories }, { data: amRows }, { data: totals }] = await Promise.all([
+  const [{ data: job }, { data: photoRows }, { data: devRows }, { data: accessories }, { data: amRows }, { data: totals }, { data: clientRow }] = await Promise.all([
     supabase.from("site_jobs").select("*").eq("quote_id", id).maybeSingle(),
     supabase.from("site_photos").select("id, path, element_id, level, x, y, kind, caption, created_at").eq("quote_id", id).order("created_at"),
     supabase.from("site_deviations").select("id, kind, equipment_key, quantity, description, status, amendment_number, created_at").eq("quote_id", id).order("created_at"),
     supabase.from("catalog_accessories_public").select("id, name, diameter, unit, category").eq("active", true).order("name").limit(500),
     supabase.from("quote_amendments").select("number, status, total_ht_cents, total_ttc_cents").eq("quote_id", id).order("number"),
     supabase.from("quotes").select("total_ht_cents, total_ttc_cents").eq("id", id).single(),
+    supabase.from("clients").select("siret").eq("id", q.project.client.id).maybeSingle(),
   ]);
   const signedPlans = rc.planRows.length ? (await supabase.storage.from("plans").createSignedUrls(rc.planRows.map((p) => p.imagePath), 3600)).data ?? [] : [];
   const signedPhotos = (photoRows ?? []).length ? (await supabase.storage.from("chantier").createSignedUrls((photoRows ?? []).map((p) => p.path as string), 3600)).data ?? [] : [];
@@ -84,6 +86,30 @@ export default async function SiteJobPage({ params }: { params: Promise<{ id: st
   const sections = commissioningSections(rc.equipment, q.wizard.metre ?? EMPTY_METRE);
   const values = ((job?.commissioning as Values | null) ?? {}) as Values;
 
+  // Fiche d'intervention fluides : valeurs calculées (le n° définitif est attribué à la première édition du PDF)
+  const stored = ((job?.fluid_form as CerfaInput | null) ?? { systems: {} }) as CerfaInput;
+  const fluidInput: CerfaInput = {
+    ...stored,
+    systems: stored.systems ?? {},
+    operatorSign: stored.operatorSign ?? { name: values.operateur ?? "", quality: "Technicien frigoriste", date: values.date ?? "", signaturePath: null },
+    holderSign: stored.holderSign ?? { name: q.project.client.name, quality: "Propriétaire", date: values.date ?? "", signaturePath: null },
+  };
+  const addr = (a: string | null, cp: string | null, city: string | null) => [a, [cp, city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const cl = q.project.client;
+  const site = addr(q.project.site_address, q.project.site_postal_code, q.project.site_city);
+  const sheets = buildCerfaSheets({
+    country: company.country ?? "FR",
+    number: fluidInput.number ?? "attribué à l'édition",
+    company: { name: company.legal_name, address: addr(company.address_line, company.postal_code, company.city), siret: company.siret, capacityNumber: company.fluid_capacity_number, leakDetectorId: company.leak_detector_id, leakDetectorCheckedOn: company.leak_detector_checked_on },
+    client: { name: cl.name, address: addr(cl.address_line, cl.postal_code, cl.city) || site, siret: (clientRow?.siret as string | null) ?? null },
+    installationAddress: site,
+    equipment: rc.equipment,
+    metre: q.wizard.metre ?? EMPTY_METRE,
+    tech: rc.tech,
+    commissioning: values,
+    form: fluidInput,
+  }).map((f, i) => ({ ...f, systemKey: rc.equipment.systems[i]!.key }));
+
   return (
     <div className="space-y-6">
       {back}
@@ -110,6 +136,7 @@ export default async function SiteJobPage({ params }: { params: Promise<{ id: st
         isAdmin={role === "admin"}
         showCosts={!restricted}
         clientName={q.project.client.name}
+        fluid={{ input: fluidInput, holderSiret: (clientRow?.siret as string | null) ?? "", sheets, country: company.country ?? "FR" }}
       />
     </div>
   );
