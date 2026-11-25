@@ -13,7 +13,7 @@ import { draftFromAnalysis, draftScale, draftTotalArea, sanitizeDraft, type Plan
 import { checkTotalArea } from "@/lib/plans/geometry";
 import { layoutChecklist, metreFromLayouts, sanitizeLayout, type Layout, type MetreReportLine } from "@/lib/plans/layout";
 import { analyzePlanImage, PlanAnalysisError } from "@/lib/plans/analyze.server";
-import { autoToggles, blocking, evaluateRules, type Finding } from "@/lib/plans/rules";
+import { autoToggles, validationBlockers, evaluateRules, type Finding } from "@/lib/plans/rules";
 import { loadRuleContext } from "@/lib/plans/rules.server";
 import { LEVEL_LABELS } from "@/lib/quote/rooms";
 
@@ -218,7 +218,7 @@ export async function saveLayout(quoteId: string, level: number, raw: unknown, v
   }
   let validated = false;
   if (validate) {
-    const red = blocking(findings);
+    const red = validationBlockers(findings, q.status);
     if (red.length) return { ok: false, message: `${red.length} règle${red.length > 1 ? "s" : ""} impérative${red.length > 1 ? "s" : ""} à corriger ou à forcer avec un motif avant de valider.` };
     await c.supabase.from("quote_plans").update({ layout_validated_at: new Date().toISOString() }).eq("quote_id", quoteId);
     validated = true;

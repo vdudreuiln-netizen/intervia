@@ -214,3 +214,14 @@ describe("R32 : recoupement avec les notices Daikin et Mitsubishi Electric", () 
     expect(a10).toBe(28); // (3 / (2,5 × 0,307^1,25 × 1,0))² = 27,6 → 28 m²
   });
 });
+
+import { validationBlockers } from "./rules";
+
+describe("devis déjà signé : les alertes rouges sont un rappel", () => {
+  it("ne bloque jamais la validation d'un devis accepté", () => {
+    const fs = evaluateRules(ctx({ markers: [{ ...ui1, support: undefined }, { ...ue1, support: undefined, confirmed: [] }], routes: [cond] }));
+    expect(validationBlockers(fs, "brouillon").length).toBeGreaterThan(0);
+    expect(validationBlockers(fs, "envoye").length).toBeGreaterThan(0);
+    expect(validationBlockers(fs, "accepte")).toEqual([]);
+  });
+});

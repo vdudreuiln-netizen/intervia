@@ -203,6 +203,7 @@ function Sheet({ f, signatures }: { f: CerfaSheet; signatures: { operator: PdfIm
               <KV k="D – destinée au traitement" v={kg(f.recovered.d)} />
               <KV k="E – conservée (réutilisation)" v={kg(f.recovered.e)} />
               <KV k="Total D + E" v={kg(f.recovered.total)} />
+              <KV k="Contenant(s)" v={f.containerId} todo={f.recovered.total > 0 ? "à compléter" : "sans objet"} />
               <KV k="N° BSFF (Trackdéchets)" v={f.bsff} todo={f.recovered.d > 0 ? "à compléter" : "sans objet"} />
             </View>
           </View>
@@ -213,7 +214,7 @@ function Sheet({ f, signatures }: { f: CerfaSheet; signatures: { operator: PdfIm
         <Box n={12} title="Transport (ADR / RID) et déchet">
           {f.adr ? (
             <>
-              <KV k="N° ONU" v={`${f.adr.un} – ${f.adr.designation}`} />
+              <KV k="N° ONU" v={f.adr.other || `${f.adr.un}, ${f.adr.designation}`} />
               <KV k="Code déchet" v={f.adr.waste} />
             </>
           ) : (
@@ -224,6 +225,7 @@ function Sheet({ f, signatures }: { f: CerfaSheet; signatures: { operator: PdfIm
           {f.destination ? (
             <>
               <KV k="Nom" v={f.destination.name} />
+              {f.destination.siret ? <KV k="SIRET" v={f.destination.siret} /> : null}
               <KV k="Adresse" v={f.destination.address} />
             </>
           ) : (

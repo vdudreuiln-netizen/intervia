@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { createElement, type ReactElement } from "react";
 import { renderToBuffer, type DocumentProps } from "@react-pdf/renderer";
 import { loadQuote } from "@/lib/quote/load";
@@ -6,6 +8,7 @@ import { loadRuleContext } from "@/lib/plans/rules.server";
 import { costAccess } from "@/lib/security/costs";
 import { pdfResponse, storedImage } from "@/lib/site/pdf.server";
 import { CerfaPdf } from "@/lib/site/CerfaPdf";
+import { fillOfficialCerfa } from "@/lib/site/cerfa-fill";
 import { buildCerfaSheets, type CerfaInput } from "@/lib/site/cerfa";
 
 export const runtime = "nodejs";
@@ -54,11 +57,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     commissioning: (job?.commissioning as Record<string, string> | null) ?? {},
     form: { systems: form.systems ?? {}, operatorSign: form.operatorSign, holderSign: form.holderSign },
   });
-  const sig = async (path: string | null | undefined) => (path && path.startsWith(`${companyId}/${id}/`) ? await storedImage(supabase, "chantier", path) : null);
-  const element = createElement(CerfaPdf, {
-    sheets,
-    company: company.legal_name,
-    signatures: { operator: await sig(form.operatorSign?.signaturePath), holder: await sig(form.holderSign?.signaturePath) },
-  }) as unknown as ReactElement<DocumentProps>;
-  return pdfResponse(await renderToBuffer(element), `${sheets[0]?.format === "cerfa" ? "CERFA-15497" : "Fiche-F-gas"}-${number}.pdf`);
+  const sig = async (p: string | null | undefined) => (p && p.startsWith(`${companyId}/${id}/`) ? await storedImage(supabase, "chantier", p) : null);
+  const signatures = { operator: await sig(form.operatorSign?.signaturePath), holder: await sig(form.holderSign?.signaturePath) };
+  if (sheets[0]?.format === "cerfa") {
+    // France : formulaire officiel CERFA 15497*04 (service-public.gouv.fr) rempli champ par champ
+    const template = await readFile(path.join(process.cwd(), "src/lib/site/cerfa/cerfa_15497-04.pdf"));
+    const bytes = await fillOfficialCerfa(new Uint8Array(template), sheets, signatures);
+    return pdfResponse(Buffer.from(bytes), `CERFA-15497-${number}.pdf`);
+  }
+  const element = createElement(CerfaPdf, { sheets, company: company.legal_name, signatures }) as unknown as ReactElement<DocumentProps>;
+  return pdfResponse(await renderToBuffer(element), `Fiche-intervention-${number}.pdf`);
 }

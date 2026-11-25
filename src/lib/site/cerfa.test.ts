@@ -39,10 +39,10 @@ describe("CERFA 15497*04 : calculs réglementaires", () => {
     expect(leakCheckMonths(500, false)).toBe(3);
     expect(leakCheckMonths(500, true)).toBe(6);
   });
-  it("cadre [12] : inflammable → UN 3161 / 16 05 04* ; sinon UN 1078 / 14 06 01*", () => {
-    expect(adrOf("R32")).toMatchObject({ un: "UN 3161", waste: "16 05 04*" });
-    expect(adrOf("R290")).toMatchObject({ un: "UN 3161" });
-    expect(adrOf("R410A")).toMatchObject({ un: "UN 1078", waste: "14 06 01*" });
+  it("cadre [12] : code ONU par fluide (R32 → UN 3252), sinon UN 3161 / 16 05 04* ou UN 1078 / 14 06 01*", () => {
+    expect(adrOf("R32")).toMatchObject({ un: "UN 3252", waste: "16 05 04*" });
+    expect(adrOf("R1234YF")).toMatchObject({ un: "UN 3161", waste: "16 05 04*" });
+    expect(adrOf("R449A")).toMatchObject({ un: "UN 1078", waste: "14 06 01*" });
   });
 });
 
@@ -77,7 +77,7 @@ describe("CERFA 15497*04 : fiche pré-remplie", () => {
     });
     expect(f!.leakCheckMonths).toBe(24);
     expect(f!.reminder).toBe(KEEP_REMINDER);
-    expect(f!.adr).toMatchObject({ un: "UN 3161" });
+    expect(f!.adr).toMatchObject({ un: "UN 3252", box: "autre_inflammable" });
     expect(f!.destination?.name).toBe("Centre de traitement X");
     expect(f!.recovered).toEqual({ d: 1.2, e: 0, total: 1.2 });
   });

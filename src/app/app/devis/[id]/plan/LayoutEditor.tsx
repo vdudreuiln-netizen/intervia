@@ -6,7 +6,7 @@ import { Button, Card, Field, LinkButton, Notice, Select } from "@/components/ui
 import { decimalToInput, parseDecimal } from "@/lib/format";
 import type { Pt } from "@/lib/plans/geometry";
 import { CONTEXT_MARKERS, equipmentTags, MARKER_LABELS, markerTag, ROUTE_COLORS, ROUTE_LABELS, routeLengthM, SUPPORT_LABELS, SUPPORTS_UE, SUPPORTS_UI, type Layout, type SupportKind, type Marker, type MarkerKind, type MetreReportLine, type RouteKind, type UeMount } from "@/lib/plans/layout";
-import { blocking, dirOf, evaluateRules, INSTALL_HEIGHT_M, POSE_HEIGHTS, R32_WARNING, type Finding, type RuleContext } from "@/lib/plans/rules";
+import { blocking, dirOf, validationBlockers, evaluateRules, INSTALL_HEIGHT_M, POSE_HEIGHTS, R32_WARNING, type Finding, type RuleContext } from "@/lib/plans/rules";
 import { suggestDucted, suggestIndoor, suggestMissing, suggestOutdoor, type SuggestContext } from "@/lib/plans/suggest";
 import { saveLayout } from "./actions";
 import { NorthArrow, PlanCanvas, unit } from "./PlanCanvas";
@@ -29,9 +29,11 @@ interface Props {
   context: RuleContext;
   quoteRooms: { id: string; name: string }[];
   validatedAt: string | null;
+  /** Statut du devis : signé (« accepte ») = alertes rouges en simple rappel. */
+  quoteStatus: string;
 }
 
-export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg, context, quoteRooms, validatedAt }: Props) {
+export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg, context, quoteRooms, validatedAt, quoteStatus }: Props) {
   const router = useRouter();
   const own = context.plans.find((p) => p.level === level)!;
   const [layout, setLayout] = useState<Layout>(own.layout);
@@ -54,6 +56,8 @@ export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg
   const live: RuleContext = useMemo(() => ({ ...context, plans: context.plans.map((p) => (p.level === level ? { ...p, layout } : p)) }), [context, layout, level]);
   const findings = useMemo(() => evaluateRules(live), [live]);
   const red = blocking(findings);
+  const signedQuote = quoteStatus === "accepte";
+  const blockers = validationBlockers(findings, quoteStatus);
   const byElement = (id: string) => findings.filter((f) => f.elementId === id);
   const sctx: SuggestContext = { plan: { ...own, layout }, equipment: eq, quoteRooms, settings: context.settings };
   const elsewhere = new Set(context.plans.filter((p) => p.level !== level).flatMap((p) => p.layout.markers.filter((m) => m.equipmentKey).map((m) => `${m.kind}:${m.equipmentKey}`)));
@@ -340,7 +344,12 @@ export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg
         </Card>
       )}
 
-      <Card title={`Contrôles : ${red.length} à corriger · ${findings.filter((f) => f.severity === "orange" || f.autoFix).length} conseil(s)`}>
+      {signedQuote && red.length > 0 && (
+        <Notice>
+          Devis signé : {red.length} point{red.length > 1 ? "s" : ""} à compléter (rappel, ne bloque ni le devis ni la validation).
+        </Notice>
+      )}
+      <Card title={`Contrôles : ${red.length} ${signedQuote ? "à compléter" : "à corriger"} · ${findings.filter((f) => f.severity === "orange" || f.autoFix).length} conseil(s)`}>
         {findings.length === 0 ? (
           <Notice tone="ok">Aucune alerte sur cette implantation.</Notice>
         ) : (
@@ -408,8 +417,8 @@ export function LayoutEditor({ quoteId, level, imageUrl, width, height, northDeg
         <Button type="button" variant="secondary" full disabled={busy} onClick={() => save(false)}>
           {busy ? "Enregistrement…" : "Enregistrer (brouillon)"}
         </Button>
-        <Button type="button" full disabled={busy || red.length > 0} onClick={() => save(true)}>
-          {red.length > 0 ? `Valider : ${red.length} règle${red.length > 1 ? "s" : ""} impérative${red.length > 1 ? "s" : ""} à traiter` : "Valider l'implantation"}
+        <Button type="button" full disabled={busy || blockers.length > 0} onClick={() => save(true)}>
+          {blockers.length > 0 ? `Valider : ${red.length} règle${red.length > 1 ? "s" : ""} impérative${red.length > 1 ? "s" : ""} à traiter` : "Valider l'implantation"}
         </Button>
         {validatedAt && !result && <p className="text-center text-sm text-slate-600">Implantation validée le {new Date(validatedAt).toLocaleDateString("fr-FR")}. Toute modification demande une nouvelle validation.</p>}
       </div>

@@ -504,6 +504,13 @@ export const fmt = (n: number, d = 1) => n.toLocaleString("fr-FR", { maximumFrac
 /** Alertes rouges non forcées : bloquent la validation de l'implantation. */
 export const blocking = (fs: Finding[]) => fs.filter((f) => f.severity === "rouge" && !f.forcedReason && !f.autoFix);
 
+/**
+ * Règles impératives qui empêchent de valider l'implantation. Un devis déjà
+ * signé (accepté) n'est jamais bloqué : les alertes rouges restent un simple
+ * rappel à compléter (support vérifié, sol dégagé… ajoutés après la signature).
+ */
+export const validationBlockers = (fs: Finding[], quoteStatus: string) => (quoteStatus === "accepte" ? [] : blocking(fs));
+
 /** Corrections automatiques à reporter au métré (pompe de relevage…). */
 export const autoToggles = (fs: Finding[]) => Object.fromEntries(fs.flatMap((f) => (f.autoFix ? [[f.autoFix.toggle, f.autoFix.on] as const] : [])));
 

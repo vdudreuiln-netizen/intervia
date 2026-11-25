@@ -107,6 +107,7 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
             context={ruleContext}
             quoteRooms={q.rooms.map((r) => ({ id: r.id, name: r.name }))}
             validatedAt={plan.layout_validated_at}
+            quoteStatus={q.status}
           />
         ))}
     </div>

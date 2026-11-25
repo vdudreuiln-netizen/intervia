@@ -40,10 +40,12 @@ export const PRG: Record<string, number> = {
   R744: 1,
 };
 
-/** Fluides inflammables (A2L, A3) : transport UN 3161 et déchet dangereux 16 05 04*. */
+/** Fluides inflammables (A2L, A3) : rubrique déchets 16 05 04*. */
 const FLAMMABLE = new Set(["R32", "R452B", "R454B", "R454C", "R1234YF", "R1234ZE", "R290", "R600A"]);
-/** Fluides de la famille HFC (seuils de contrôle exprimés en t éq. CO2). */
+/** Fluides de la famille HFC et mélanges HFC/HFO (seuils de contrôle en t éq. CO2). */
 const HFC = new Set(["R32", "R410A", "R407C", "R134A", "R404A", "R452B", "R454B", "R454C", "R513A", "R448A", "R449A"]);
+/** HFO purs (seuils de contrôle en kg sur le CERFA : 1 / 10 / 100 kg). */
+const HFO = new Set(["R1234YF", "R1234ZE"]);
 
 export const normalizeFluid = (f: string | null | undefined) => (f ?? "").toUpperCase().replace(/[\s-]/g, "");
 export const fluidLabel = (f: string) => {
@@ -64,17 +66,53 @@ export function teqCo2(chargeKg: number, prg: number): number {
   return Math.round(((chargeKg * prg) / 1000) * 100) / 100;
 }
 
-/** Cadre [12] : transport ADR/RID et code déchet, selon l'inflammabilité. */
-export function adrOf(fluid: string): { un: string; designation: string; waste: string } {
-  return isFlammable(fluid)
-    ? { un: "UN 3161", designation: "Gaz liquéfié inflammable, n.s.a. (classe 2.1)", waste: "16 05 04*" }
-    : { un: "UN 1078", designation: "Gaz frigorifique, n.s.a. (classe 2.2)", waste: "14 06 01*" };
+/**
+ * Code ONU spécifique par fluide (cadre [12], ligne « Autres fluides frigorigènes… »).
+ * Fluide absent de la table : case par défaut UN 3161 (inflammable) ou UN 1078 (non inflammable).
+ */
+export const UN_BY_FLUID: Record<string, string> = {
+  R32: "UN 3252, déchet difluorométhane (gaz réfrigérant R 32), 2.1",
+  R410A: "UN 3163, déchet gaz liquéfié NSA (gaz réfrigérant R 410A), 2.2",
+  R407C: "UN 3340, déchet gaz réfrigérant R 407C, 2.2",
+  R404A: "UN 3337, déchet gaz réfrigérant R 404A, 2.2",
+  R134A: "UN 3159, déchet 1,1,1,2-tétrafluoroéthane (gaz réfrigérant R 134a), 2.2",
+  R290: "UN 1978, déchet propane (gaz réfrigérant R 290), 2.1",
+  R600A: "UN 1969, déchet isobutane (gaz réfrigérant R 600a), 2.1",
+};
+
+export interface Adr {
+  flammable: boolean;
+  /** Case cochée au cadre [12]. */
+  box: "UN1078" | "UN3161" | "autre_non_inflammable" | "autre_inflammable";
+  /** Texte de la ligne « Autres fluides frigorigènes… » (vide pour la case par défaut). */
+  other: string;
+  un: string;
+  designation: string;
+  waste: string;
+}
+
+/** Cadre [12] : rubrique déchets selon l'inflammabilité, code ONU spécifique si connu. */
+export function adrOf(fluid: string): Adr {
+  const flammable = isFlammable(fluid);
+  const specific = UN_BY_FLUID[normalizeFluid(fluid)];
+  const waste = flammable ? "16 05 04*" : "14 06 01*";
+  if (specific) {
+    return { flammable, box: flammable ? "autre_inflammable" : "autre_non_inflammable", other: specific, un: specific.split(",")[0]!, designation: specific.split(",").slice(1).join(",").trim(), waste };
+  }
+  return flammable
+    ? { flammable, box: "UN3161", other: "", un: "UN 3161", designation: "Déchet gaz liquéfié inflammable NSA, 2.1 (B/D)", waste }
+    : { flammable, box: "UN1078", other: "", un: "UN 1078", designation: "Déchet gaz frigorifique NSA (gaz réfrigérant, NSA), 2.2 (C/E)", waste };
 }
 
 /**
  * Cadres [7] à [9] : périodicité du contrôle d'étanchéité, en mois ; null = aucun
  * contrôle périodique (jamais exigé sous 5 t éq. CO2).
  */
+/** HFO : mêmes fréquences, seuils en kg de fluide (1 / 10 / 100 kg), selon le CERFA 15497*04. */
+export function leakCheckMonthsHfo(kg: number, permanentDetection: boolean): number | null {
+  return leakCheckMonths(kg * 5, permanentDetection);
+}
+
 export function leakCheckMonths(teq: number, permanentDetection: boolean): number | null {
   if (!(teq >= 5)) return null;
   if (teq < 50) return permanentDetection ? 24 : 12;
@@ -125,7 +163,10 @@ export interface CerfaSystemInput {
   recoveredTreatmentKg: number;
   recoveredReuseKg: number;
   bsff: string;
+  /** Identification du ou des contenants (cadre [11]). */
+  containerId: string;
   destinationName: string;
+  destinationSiret: string;
   destinationAddress: string;
   observations: string;
 }
@@ -149,7 +190,9 @@ export const DEFAULT_SYSTEM_INPUT: CerfaSystemInput = {
   recoveredTreatmentKg: 0,
   recoveredReuseKg: 0,
   bsff: "",
+  containerId: "",
   destinationName: "",
+  destinationSiret: "",
   destinationAddress: "",
   observations: "",
 };
@@ -179,7 +222,9 @@ export function sanitizeSystemInput(raw: unknown): CerfaSystemInput {
     recoveredTreatmentKg: kgNum(r.recoveredTreatmentKg) ?? 0,
     recoveredReuseKg: kgNum(r.recoveredReuseKg) ?? 0,
     bsff: text(r.bsff, 40),
+    containerId: text(r.containerId, 60),
     destinationName: text(r.destinationName, 120),
+    destinationSiret: text(r.destinationSiret, 20).replace(/\s/g, ""),
     destinationAddress: text(r.destinationAddress, 200),
     observations: text(r.observations, 1000),
   };
@@ -217,8 +262,9 @@ export interface CerfaSheet {
   natureOther: string;
   leakDetector: { id: string; checkedOn: string };
   permanentDetection: boolean;
-  /** [7]–[9] */
+  /** [7]–[9] : famille du fluide pour les seuils. */
   hfc: boolean;
+  hfo: boolean;
   leakCheckMonths: number | null;
   leakCheckText: string;
   leaksFound: boolean;
@@ -226,8 +272,9 @@ export interface CerfaSheet {
   charged: { a: number; b: number; c: number; total: number };
   recovered: { d: number; e: number; total: number };
   bsff: string;
-  adr: { un: string; designation: string; waste: string } | null;
-  destination: { name: string; address: string } | null;
+  containerId: string;
+  adr: Adr | null;
+  destination: { name: string; siret: string; address: string } | null;
   observations: string;
   operatorSign: SignatureBlock;
   holderSign: SignatureBlock;
@@ -279,9 +326,11 @@ export function buildCerfaSheets(input: {
     const prg = prgOf(fluid);
     const teq = total !== null && prg !== null ? teqCo2(total, prg) : null;
     const hfc = HFC.has(normalizeFluid(fluid));
-    const months = teq !== null && hfc ? leakCheckMonths(teq, s.permanentDetection) : null;
+    const hfo = HFO.has(normalizeFluid(fluid));
+    const months = hfc && teq !== null ? leakCheckMonths(teq, s.permanentDetection) : hfo && total !== null ? leakCheckMonthsHfo(total, s.permanentDetection) : null;
     const leakCheckText =
-      !hfc ? `${fluid} : fluide non HFC, vérifier le seuil applicable (règlement (UE) 2024/573).`
+      hfo ? (total === null ? "Charge inconnue : à compléter." : months === null ? `${fluid} (HFO) : ${total.toLocaleString("fr-FR")} kg < 1 kg, aucun contrôle périodique obligatoire.` : `${fluid} (HFO) : ${total.toLocaleString("fr-FR")} kg, contrôle d'étanchéité tous les ${months} mois${s.permanentDetection ? " (détection permanente)" : ""}.`)
+      : !hfc ? `${fluid} : fluide hors HFC / HFO, vérifier le seuil applicable (règlement (UE) 2024/573).`
       : teq === null ? "Charge ou PRG inconnus : tonnage à compléter."
       : months === null ? `${teq.toLocaleString("fr-FR")} t éq. CO2 < 5 t : aucun contrôle d'étanchéité périodique obligatoire.`
       : `${teq.toLocaleString("fr-FR")} t éq. CO2 : contrôle d'étanchéité tous les ${months} mois${s.permanentDetection ? " (détection permanente)" : ""}.`;
@@ -305,6 +354,7 @@ export function buildCerfaSheets(input: {
       leakDetector: { id: input.company.leakDetectorId ?? "", checkedOn: input.company.leakDetectorCheckedOn ?? "" },
       permanentDetection: s.permanentDetection,
       hfc,
+      hfo,
       leakCheckMonths: months,
       leakCheckText,
       leaksFound: s.leaksFound,
@@ -312,8 +362,9 @@ export function buildCerfaSheets(input: {
       charged: { a: round3(a), b: s.chargedRecycledKg, c: s.chargedRegeneratedKg, total: round3(a + s.chargedRecycledKg + s.chargedRegeneratedKg) },
       recovered: { d: s.recoveredTreatmentKg, e: s.recoveredReuseKg, total: recoveredTotal },
       bsff: s.bsff,
+      containerId: s.containerId,
       adr: recoveredTotal > 0 ? adrOf(fluid) : null,
-      destination: recoveredTotal > 0 ? { name: s.destinationName, address: s.destinationAddress } : null,
+      destination: recoveredTotal > 0 ? { name: s.destinationName, siret: s.destinationSiret, address: s.destinationAddress } : null,
       observations: s.observations,
       operatorSign: input.form.operatorSign ?? empty,
       holderSign: input.form.holderSign ?? empty,

@@ -151,7 +151,7 @@ export function FluidFormTab({ quoteId, companyId, fluid, busy, run, setMsg }: {
     <div className="space-y-5">
       <Notice>
         {official
-          ? "Formulaire officiel CERFA 15497*04, pré-rempli depuis le devis, le catalogue, la mise en service et vos paramètres. Vérifiez puis faites signer."
+          ? "Formulaire officiel CERFA 15497*04 (service-public.gouv.fr), rempli depuis le devis, le catalogue, la mise en service et vos paramètres. Vérifiez puis faites signer."
           : "Fiche d'intervention générique (règlement (UE) 2024/573) : le CERFA 15497*04 ne s'applique qu'en France (pays du compte, Paramètres › Règles d'implantation et fiche fluides)."}
       </Notice>
       {fluid.sheets.some((f) => f.warnings.includes(NO_CAPACITY_WARNING)) && <Notice tone="danger">⚠ {NO_CAPACITY_WARNING}</Notice>}
@@ -228,13 +228,15 @@ export function FluidFormTab({ quoteId, companyId, fluid, busy, run, setMsg }: {
               <KgField label="E – conservé pour réutilisation" value={s.recoveredReuseKg} onChange={(v) => patch(f.systemKey, { recoveredReuseKg: v })} />
               <p className="text-base font-bold">Total D + E : {kgText(s.recoveredTreatmentKg + s.recoveredReuseKg)}</p>
               {s.recoveredTreatmentKg > 0 && <Field label="N° de BSFF (Trackdéchets)" value={s.bsff} onChange={(v) => patch(f.systemKey, { bsff: v })} />}
+              {recovered && <Field label="Identification du ou des contenants" value={s.containerId} onChange={(v) => patch(f.systemKey, { containerId: v })} placeholder="Ex. : bouteille de récupération 12 L n° 5521" />}
             </fieldset>
             {recovered && (
               <fieldset className="space-y-2">
                 <legend className="text-base font-bold">[13] Installation de destination du fluide récupéré</legend>
                 <Field label="Nom" value={s.destinationName} onChange={(v) => patch(f.systemKey, { destinationName: v })} />
+                <Field label="SIRET" inputMode="numeric" value={s.destinationSiret} onChange={(v) => patch(f.systemKey, { destinationSiret: v })} />
                 <Field label="Adresse" value={s.destinationAddress} onChange={(v) => patch(f.systemKey, { destinationAddress: v })} />
-                <p className="text-sm text-slate-600">[12] rempli automatiquement selon le fluide (inflammable : UN 3161, déchet 16 05 04* ; sinon UN 1078, 14 06 01*).</p>
+                <p className="text-sm text-slate-600">[12] rempli automatiquement selon le fluide : code ONU propre au fluide s&apos;il est connu (R-32 : UN 3252, difluorométhane, 2.1), sinon UN 3161 (inflammables, déchet 16 05 04*) ou UN 1078 (non inflammables, 14 06 01*).</p>
               </fieldset>
             )}
             <Field label="[14] Observations" value={s.observations} onChange={(v) => patch(f.systemKey, { observations: v })} />
