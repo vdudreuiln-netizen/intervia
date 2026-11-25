@@ -25,14 +25,15 @@ select
   to_regclass('public.supplier_offers')  is not null as migration_10,
   to_regclass('public.quote_plans')      is not null as migration_11,
   to_regclass('public.site_jobs')        is not null as migration_12,
-  to_regclass('public.quote_amendments') is not null as migration_13;
+  to_regclass('public.quote_amendments') is not null as migration_13,
+  to_regclass('public.ref_brands')       is not null as migration_14;
 ```
 
-4. Notez le résultat (« true » = déjà fait, « false » = à faire). Exemple : `true | true | false | false`
-   → il faudra exécuter la 12 puis la 13.
+4. Notez le résultat (« true » = déjà fait, « false » = à faire). Exemple : `true | true | false | false | false`
+   → il faudra exécuter la 12, puis la 13, puis la 14.
 
-> **La migration 13 est obligatoire avec cette version** (avenants, CERFA, pays du compte) :
-> si la 12 est à faire, la 13 l'est aussi, juste après.
+> **Les migrations 13 et 14 sont à exécuter avec cette version** (13 : avenants, CERFA, pays du compte ;
+> 14 : catalogue commun et remises) : si la 12 est à faire, la 13 et la 14 le sont aussi, juste après.
 
 ---
 
@@ -88,18 +89,19 @@ En cas de message d'erreur :
 
 ## Étape 3 — Exécuter les migrations (5 min)
 
-Pour **chaque** migration marquée « false » à l'étape 1, **dans l'ordre 10 → 11 → 12 → 13** :
+Pour **chaque** migration marquée « false » à l'étape 1, **dans l'ordre 10 → 11 → 12 → 13 → 14** :
 
 1. Ouvrez le lien du fichier sur GitHub :
    - 10 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261115000010_multi_suppliers.sql
    - 11 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261116000011_plans.sql
    - 12 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261117000012_placement_and_site.sql
    - 13 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261125000013_validation_fixes.sql
+   - 14 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261126000014_reference_catalog.sql
 2. Cliquez sur l'icône **Copy raw file** (deux carrés superposés, en haut à droite du fichier).
 3. Supabase › **SQL Editor** › **+ New query** › collez › **Run**.
 4. Résultat attendu : « Success. No rows returned ».
    **En cas d'erreur : n'exécutez rien d'autre**, notez le message exact et gardez la sauvegarde.
-5. Une fois toutes faites, relancez la requête de l'étape 1 : les 4 colonnes doivent afficher **true**.
+5. Une fois toutes faites, relancez la requête de l'étape 1 : les 5 colonnes doivent afficher **true**.
 
 ---
 

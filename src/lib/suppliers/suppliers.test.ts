@@ -327,9 +327,10 @@ describe("choix des fournisseurs", () => {
 
 describe("tarif ancien", () => {
   const now = new Date("2026-11-15T12:00:00Z");
-  it("plus de 6 mois sans mise à jour", () => {
-    expect(isTariffStale("2026-05-10T00:00:00Z", now)).toBe(true);
-    expect(isTariffStale("2026-05-20T00:00:00Z", now)).toBe(false);
+  it("plus de 12 mois sans mise à jour (seuil par défaut, réglable)", () => {
+    expect(isTariffStale("2025-11-10T00:00:00Z", now)).toBe(true);
+    expect(isTariffStale("2025-11-20T00:00:00Z", now)).toBe(false);
+    expect(isTariffStale("2026-05-10T00:00:00Z", now, 6)).toBe(true);
     expect(isTariffStale(null, now)).toBe(true);
   });
 });

@@ -200,7 +200,7 @@ Sans cette clé, tout fonctionne : import Excel / CSV des tarifs, et pièces des
 
 ---
 
-## Partie F ter — Mettre à jour une base déjà en service (migrations 10 à 13)
+## Partie F ter — Mettre à jour une base déjà en service (migrations 10 à 14)
 
 > Guide détaillé pour un non-développeur (installation de l'outil de sauvegarde, commandes Windows / Mac,
 > mise en ligne, vérifications) : **`DEPLOYER-CETTE-VERSION.md`**.
@@ -229,9 +229,10 @@ Supabase › **SQL Editor** › **+ New query**, collez le fichier puis **Run** 
 
 | Si votre base a été installée… | Exécutez dans l'ordre |
 |---|---|
-| avant les blocs B et A | `20261115000010_multi_suppliers.sql`, `20261116000011_plans.sql`, `20261117000012_placement_and_site.sql`, `20261125000013_validation_fixes.sql` |
-| avec le bloc A (plans) mais sans le mode chantier | `20261117000012_placement_and_site.sql`, `20261125000013_validation_fixes.sql` |
-| avec le mode chantier (migration 12) | `20261125000013_validation_fixes.sql` |
+| avant les blocs B et A | `…10_multi_suppliers.sql`, `…11_plans.sql`, `…12_placement_and_site.sql`, `…13_validation_fixes.sql`, `…14_reference_catalog.sql` |
+| avec le bloc A (plans) mais sans le mode chantier | `…12_placement_and_site.sql`, `…13_validation_fixes.sql`, `…14_reference_catalog.sql` |
+| avec le mode chantier (migration 12) | `…13_validation_fixes.sql`, `…14_reference_catalog.sql` |
+| avec la migration 13 | `…14_reference_catalog.sql` |
 
 Tous les fichiers sont dans `supabase/migrations/`. Résultat attendu à chaque fois : « Success. No rows returned ».
 *En cas d'erreur, ne relancez pas : notez le message, gardez la sauvegarde et contactez votre développeur.*

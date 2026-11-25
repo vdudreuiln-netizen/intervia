@@ -369,9 +369,10 @@ export function supplierScenarios(lines: ChoiceLine[], suppliers: SupplierInfo[]
 // Tarif ancien
 // ---------------------------------------------------------------------------
 
-export const STALE_TARIFF_MONTHS = 6;
+/** Seuil par défaut (réglable par compte : companies.tariff_alert_months). */
+export const STALE_TARIFF_MONTHS = 12;
 
-/** Vrai si le dernier tarif d'un fournisseur date de plus de 6 mois (ou n'a jamais été mis à jour). */
+/** Vrai si le dernier tarif date de plus de `months` mois (ou n'a jamais été mis à jour). */
 export function isTariffStale(lastUpdate: string | Date | null, now: Date = new Date(), months = STALE_TARIFF_MONTHS): boolean {
   if (!lastUpdate) return true;
   const d = typeof lastUpdate === "string" ? new Date(lastUpdate) : lastUpdate;
