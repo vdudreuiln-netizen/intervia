@@ -5,11 +5,17 @@
  */
 
 function normalizeNumber(input: string): string {
-  return input
+  let t = input
     .trim()
-    .replace(/[\s  ]/g, "") // espaces, insécables
-    .replace(/€|%/g, "")
-    .replace(",", ".");
+    .replace(/[\s\u00a0\u202f]/g, "") // espaces, insécables
+    .replace(/€|%/g, "");
+  const comma = t.lastIndexOf(",");
+  const dot = t.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    // « 1.234,56 » (français) ou « 1,234.56 » (anglais) : le dernier séparateur est la décimale
+    t = comma > dot ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, "");
+  } else t = t.replace(",", ".");
+  return t;
 }
 
 export function parseDecimal(input: string): number | null {

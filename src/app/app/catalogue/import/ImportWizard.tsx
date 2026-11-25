@@ -8,6 +8,8 @@ import { ACCESSORY_CATEGORIES } from "@/lib/catalog/forms";
 import {
   BIG_INCREASE,
   cellText,
+  errorReportCsv,
+  parsePackaging,
   parseDiscount,
   parseKw,
   parsePriceCents,
@@ -64,12 +66,16 @@ async function fileHash(file: File): Promise<string | null> {
 
 const serialize = (c: Cell): string | number | null => (c === null || c === undefined ? null : typeof c === "number" ? c : cellText(c));
 
-export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarget: ImportTarget; suppliers: SupplierOpt[]; brands: string[] }) {
+export function ImportWizard({ initialTarget, suppliers, brands, manufacturerMappings }: { initialTarget: ImportTarget; suppliers: SupplierOpt[]; brands: string[]; manufacturerMappings: Record<string, Partial<Record<ImportTarget, Mapping>>> }) {
   const [step, setStep] = useState<1 | "pdf" | 2 | 3 | 4>(1);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [source, setSource] = useState<"tableur" | "pdf">("tableur");
   const [hash, setHash] = useState<string | null>(null);
   const [target, setTarget] = useState<ImportTarget>(initialTarget);
+  const [origin, setOrigin] = useState<"distributeur" | "fabricant">("distributeur");
+  const [brandName, setBrandName] = useState("");
+  const [priceKind, setPriceKind] = useState<"public" | "net">("public");
+  const [tariffDate, setTariffDate] = useState("");
   const [supplierChoice, setSupplierChoice] = useState(suppliers[0]?.id ?? NEW_SUPPLIER);
   const [newSupplier, setNewSupplier] = useState("");
   const [file, setFile] = useState<{ name: string; table: Cell[][] } | null>(null);
@@ -83,8 +89,10 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
   const [pending, start] = useTransition();
 
   const chosen = suppliers.find((s) => s.id === supplierChoice);
-  const supplierName = supplierChoice === NEW_SUPPLIER ? newSupplier.trim() : (chosen?.name ?? "");
-  const remembered = source === "pdf" ? undefined : chosen?.mapping[target];
+  const supplierName = origin === "fabricant" ? (brandName.trim() ? `Tarif fabricant ${brandName.trim()}` : "") : supplierChoice === NEW_SUPPLIER ? newSupplier.trim() : (chosen?.name ?? "");
+  // Correspondance des colonnes mémorisée par fournisseur, ou par MARQUE pour un tarif fabricant
+  const remembered = source === "pdf" ? undefined : origin === "fabricant" ? manufacturerMappings[brandName.trim().toLowerCase()]?.[target] : chosen?.mapping[target];
+  const kind = origin === "fabricant" ? "public" : priceKind;
   const headers = useMemo(() => (file ? (file.table[headerIndex] ?? []).map(cellText) : []), [file, headerIndex]);
   const sample = (col?: string): Cell => {
     if (!file || !col) return null;
@@ -97,9 +105,12 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
     const raw = typeof c === "number" ? c.toLocaleString("fr-FR") : cellText(c);
     if (raw === "") return "Exemple : (vide)";
     let read: string | null = null;
-    if (field === "public_price") {
+    if (field === "public_price" || field === "net_price") {
       const p = parsePriceCents(c);
-      read = p === null ? "illisible" : formatEuros(p);
+      read = p === null ? "illisible" : `${formatEuros(p)}${field === "public_price" ? (kind === "net" ? " (prix net)" : " (prix public)") : ""}`;
+    } else if (field === "unit" || field === "pack_qty") {
+      const pk = field === "unit" ? parsePackaging(c, sample(mapping.pack_qty)) : parsePackaging(sample(mapping.unit), c);
+      read = pk === "invalid" ? "illisible" : `${pk.packQty.toLocaleString("fr-FR")} ${pk.unit === "m" ? "m" : pk.unit === "kg" ? "kg" : pk.unit === "forfait" ? "forfait" : "pièce(s)"} par conditionnement${pk.packQty !== 1 ? " : prix ramené à l'unité" : ""}`;
     } else if (field === "discount") {
       const d = parseDiscount(c);
       read = d === "invalid" ? "illisible" : d === null ? null : formatPercent(d);
@@ -143,15 +154,30 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
     }));
     return {
       target,
-      supplierId: chosen?.id ?? null,
+      origin,
+      brandName: brandName.trim(),
+      supplierId: origin === "fabricant" ? null : (chosen?.id ?? null),
       supplierName,
+      tariffDate,
+      priceKind: kind,
       filename: file!.name,
       fileHash: hash,
       source,
       mapping,
-      defaults,
+      defaults: { ...defaults, priceKind: kind },
       rows,
     };
+  }
+
+  function downloadErrors() {
+    if (!file || !preview?.allErrors?.length) return;
+    const cells = new Map(projectRows(file.table, headerIndex, mapping).map((r) => [r.line, r.cells]));
+    const blob = new Blob([errorReportCsv(file.name, preview.allErrors, cells)], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `erreurs-import-${file.name.replace(/\.[^.]+$/, "")}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function onPdfValidated(rows: ReviewRow[], h: string) {
@@ -187,15 +213,51 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
               { value: "accessoires", label: "Accessoires", hint: "Liaisons, goulottes, supports, pompes…" },
             ]}
           />
-          <Select
-            label="Fournisseur"
-            value={supplierChoice}
-            onChange={setSupplierChoice}
-            options={[...suppliers.map((s) => ({ value: s.id, label: s.name })), { value: NEW_SUPPLIER, label: "+ Nouveau fournisseur" }]}
-            hint="La correspondance des colonnes est mémorisée pour chaque fournisseur"
-            placeholder="Choisir…"
+          <Choice
+            label="D'où vient ce tarif ?"
+            value={origin}
+            onChange={(v) => {
+              setOrigin(v);
+              if (v === "fabricant") setPriceKind("public");
+            }}
+            options={[
+              { value: "distributeur", label: "Mon distributeur", hint: "Grossiste chez qui vous achetez" },
+              { value: "fabricant", label: "Un fabricant", hint: "Tarif public d'une marque (Daikin, Atlantic…)" },
+            ]}
           />
-          {supplierChoice === NEW_SUPPLIER && <Field label="Nom du fournisseur" value={newSupplier} onChange={setNewSupplier} placeholder="Ex. : distributeur, grossiste…" />}
+          {origin === "distributeur" ? (
+            <>
+              <Select
+                label="Distributeur"
+                value={supplierChoice}
+                onChange={setSupplierChoice}
+                options={[...suppliers.map((s) => ({ value: s.id, label: s.name })), { value: NEW_SUPPLIER, label: "+ Nouveau distributeur" }]}
+                hint="La correspondance des colonnes est mémorisée pour chaque distributeur"
+                placeholder="Choisir…"
+              />
+              {supplierChoice === NEW_SUPPLIER && <Field label="Nom du distributeur" value={newSupplier} onChange={setNewSupplier} placeholder="Ex. : distributeur, grossiste…" />}
+              <Choice
+                label="Les prix du fichier sont…"
+                value={priceKind}
+                onChange={setPriceKind}
+                options={[
+                  { value: "public", label: "Prix publics", hint: "Votre remise distributeur × marque s'applique ensuite" },
+                  { value: "net", label: "Prix nets", hint: "Déjà remisés : utilisés tels quels, sans remise par-dessus" },
+                ]}
+              />
+            </>
+          ) : (
+            <>
+              <Field label="Marque du tarif" value={brandName} onChange={setBrandName} list="brands-list-origin" hint="La correspondance des colonnes est mémorisée pour chaque marque" />
+              <datalist id="brands-list-origin">
+                {brands.map((b) => (
+                  <option key={b} value={b} />
+                ))}
+              </datalist>
+              <p className="text-base text-slate-600">Un tarif fabricant donne des prix publics : vos remises distributeur × marque s&apos;appliquent ensuite. Il reste réservé à votre compte.</p>
+            </>
+          )}
+          <Field label="Date du tarif" type="date" value={tariffDate} onChange={setTariffDate} hint="Date d'effet indiquée sur le tarif : sert aux alertes « tarif de plus de 12 mois » et, en cas de doublon, le tarif le plus récent l'emporte" />
           <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-brand bg-brand-light px-4 text-center text-lg font-bold text-brand">
             {file ? `✔ ${file.name}` : pdfFile ? `✔ ${pdfFile.name}` : "📄 Choisir le fichier (.xlsx, .csv ou .pdf)"}
             {file && <span className="text-base font-normal">{file.table.length} lignes lues · toucher pour changer</span>}
@@ -208,10 +270,11 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
             Télécharger le modèle {target === "materiel" ? "matériel" : "accessoires"} (CSV pour Excel)
           </a>
         </Card>
-        <Button type="button" full disabled={(!file && !pdfFile) || !supplierName} onClick={() => setStep(pdfFile ? "pdf" : 2)}>
+        <Button type="button" full disabled={(!file && !pdfFile) || !supplierName || !tariffDate} onClick={() => setStep(pdfFile ? "pdf" : 2)}>
           {pdfFile ? "Suivant : choisir les pages" : "Suivant : les colonnes"}
         </Button>
-        {(file || pdfFile) && !supplierName && <p className="text-center text-base text-danger">Indiquez le fournisseur.</p>}
+        {(file || pdfFile) && !supplierName && <p className="text-center text-base text-danger">{origin === "fabricant" ? "Indiquez la marque." : "Indiquez le distributeur."}</p>}
+        {(file || pdfFile) && supplierName && !tariffDate && <p className="text-center text-base text-danger">Indiquez la date du tarif.</p>}
       </div>
     );
   }
@@ -249,9 +312,9 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
             </div>
           ))}
         </Card>
-        {target === "materiel" && (!mapping.brand || !mapping.type) && (
+        {target === "materiel" && ((origin !== "fabricant" && !mapping.brand) || (!mapping.type && !mapping.discount_family)) && (
           <Card title="Valeurs pour tout le fichier">
-            {!mapping.brand && (
+            {origin !== "fabricant" && !mapping.brand && (
               <Field label="Marque de tous les produits" value={defaults.brand ?? ""} onChange={(v) => setDefaults({ ...defaults, brand: v })} list="brands-list" hint="Choisissez une marque existante ou tapez-en une nouvelle" />
             )}
             <datalist id="brands-list">
@@ -259,7 +322,7 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
                 <option key={b} value={b} />
               ))}
             </datalist>
-            {!mapping.type && (
+            {!mapping.type && !mapping.discount_family && (
               <Select
                 label="Type de tous les produits"
                 value={defaults.type ?? ""}
@@ -292,7 +355,7 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
             full
             disabled={pending}
             onClick={() => {
-              const local = validateMapping(mapping, target, defaults);
+              const local = validateMapping(mapping, target, origin === "fabricant" ? { ...defaults, brand: brandName } : defaults);
               setProblems(local);
               if (local.length) return;
               start(async () => {
@@ -338,12 +401,16 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
       { label: "baisses de prix", value: s.decreases },
       { label: "remises modifiées", value: s.discountChanges },
       { label: "inchangés", value: s.unchanged },
+      { label: "lignes en erreur (ignorées)", value: s.errors, tone: s.errors ? "danger" : undefined },
     ];
     return (
       <div className="space-y-6">
         <Card title="3. Résumé avant validation">
           <p className="text-base text-slate-700">
-            {file?.name} · fournisseur {supplierName}
+            {file?.name} · {supplierName} · tarif du {tariffDate.split("-").reverse().join("/")} · {kind === "net" ? "prix nets (utilisés tels quels)" : "prix publics (remises appliquées ensuite)"}
+          </p>
+          <p className="text-lg font-bold">
+            {s.newItems} nouvelle(s) · {s.priceChanges + s.discountChanges + s.newOffers} mise(s) à jour · {s.errors} en erreur
           </p>
           <div className="grid grid-cols-2 gap-3">
             {tiles.map((t) => (
@@ -395,6 +462,9 @@ export function ImportWizard({ initialTarget, suppliers, brands }: { initialTarg
 
         {(preview.errors?.length ?? 0) > 0 && (
           <Card title={`${s.errors} ligne(s) ignorée(s)`}>
+            <Button type="button" variant="secondary" full onClick={downloadErrors}>
+              ⬇ Télécharger le rapport d&apos;erreurs (CSV pour Excel)
+            </Button>
             <ul className="space-y-2 text-base">
               {preview.errors!.map((e) => (
                 <li key={`${e.line}-${e.message}`}>

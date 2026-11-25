@@ -36,7 +36,7 @@ export function buildItemPricing(input: {
   const names = new Map(input.suppliers.map((s) => [s.id, s.name]));
   const offers: OfferView[] = input.offers
     .map((o) => {
-      const n = netPurchase(o, input.brandId, input.book);
+      const n = o.purchasable === false ? null : netPurchase(o, input.brandId, input.book);
       return {
         supplierId: o.supplierId,
         supplierName: names.get(o.supplierId) ?? "?",
@@ -44,7 +44,7 @@ export function buildItemPricing(input: {
         publicPriceCents: o.publicPriceCents,
         discount: o.discount,
         netCents: n?.netCents ?? null,
-        levelLabel: n ? DISCOUNT_LEVEL_LABELS[n.level] : "Prix incomplet",
+        levelLabel: o.purchasable === false ? "Tarif fabricant (prix public)" : n ? DISCOUNT_LEVEL_LABELS[n.level] : "Prix incomplet",
         rate: n?.rate ?? 0,
         probable: o.matchStatus === "probable",
         isReference: false,

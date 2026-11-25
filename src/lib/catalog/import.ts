@@ -36,8 +36,8 @@ export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
 // ---------------------------------------------------------------------------
 
 export type OfferField = "supplier_ref" | "ean" | "discount_family" | "net_price";
-export type MaterialField = "brand" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "link_diameters" | "precharged_length_m" | "extra_charge_g_per_m" | "public_price" | "discount" | OfferField;
-export type AccessoryField = "reference" | "name" | "category" | "diameter" | "unit" | "public_price" | "discount" | OfferField;
+export type MaterialField = "brand" | "designation" | "range_name" | "reference" | "type" | "cooling_kw" | "heating_kw" | "max_outlets" | "link_diameters" | "precharged_length_m" | "extra_charge_g_per_m" | "public_price" | "discount" | OfferField;
+export type AccessoryField = "reference" | "name" | "brand" | "category" | "diameter" | "unit" | "pack_qty" | "public_price" | "discount" | OfferField;
 export type ImportField = MaterialField | AccessoryField;
 
 export interface FieldDef {
@@ -65,10 +65,10 @@ const OFFER_FIELDS: FieldDef[] = [
   },
   {
     key: "discount_family",
-    label: "Famille de remise",
+    label: "Famille (remise)",
     required: false,
-    hint: "Sinon : la gamme",
-    synonyms: ["famille de remise", "famille remise", "code remise", "groupe de remise", "fam remise", "famille tarifaire", "classe de remise", "groupe remise"],
+    hint: "Famille du tarif : sert aux remises par famille (sinon : la gamme)",
+    synonyms: ["famille de remise", "famille remise", "code remise", "groupe de remise", "fam remise", "famille tarifaire", "classe de remise", "groupe remise", "famille", "famille produit", "famille article", "code famille"],
   },
   {
     key: "net_price",
@@ -89,9 +89,10 @@ export const FIELDS: Record<ImportTarget, FieldDef[]> = {
     },
     {
       key: "public_price",
-      label: "Prix public HT",
+      label: "Prix HT",
       required: true,
-      synonyms: ["prix public ht", "prix public", "ppi", "ppht", "tarif", "prix ht", "prix", "tarif public", "prix catalogue"],
+      hint: "Public ou net : selon la case cochée pour le fichier",
+      synonyms: ["prix public ht", "prix public", "ppi", "ppht", "tarif", "prix ht", "prix", "tarif public", "prix catalogue", "prix unitaire ht", "pu ht", "prix tarif"],
     },
     {
       key: "brand",
@@ -101,11 +102,17 @@ export const FIELDS: Record<ImportTarget, FieldDef[]> = {
       synonyms: ["marque", "fabricant", "brand", "constructeur"],
     },
     {
+      key: "designation",
+      label: "Désignation",
+      required: false,
+      synonyms: ["designation", "libelle", "description", "libelle article", "nom"],
+    },
+    {
       key: "type",
       label: "Type d'unité",
       required: false,
       hint: "Sinon : type choisi pour tout le fichier",
-      synonyms: ["type", "famille", "categorie", "type unite", "type d'unite"],
+      synonyms: ["type", "categorie", "type unite", "type d'unite"],
     },
     {
       key: "range_name",
@@ -173,17 +180,23 @@ export const FIELDS: Record<ImportTarget, FieldDef[]> = {
     },
     {
       key: "public_price",
-      label: "Prix public HT",
+      label: "Prix HT",
       required: false,
-      hint: "Ou « Prix net HT »",
-      synonyms: ["prix public ht", "prix public", "ppi", "tarif", "prix ht", "prix", "prix catalogue"],
+      hint: "Public ou net : selon la case cochée pour le fichier",
+      synonyms: ["prix public ht", "prix public", "ppi", "tarif", "prix ht", "prix", "prix catalogue", "prix unitaire ht", "pu ht", "prix tarif"],
+    },
+    {
+      key: "brand",
+      label: "Marque",
+      required: false,
+      synonyms: ["marque", "fabricant", "brand", "constructeur"],
     },
     {
       key: "category",
       label: "Catégorie",
       required: false,
       hint: "Sinon : catégorie choisie pour tout le fichier",
-      synonyms: ["categorie", "famille", "type"],
+      synonyms: ["categorie", "type", "rubrique"],
     },
     {
       key: "diameter",
@@ -193,9 +206,17 @@ export const FIELDS: Record<ImportTarget, FieldDef[]> = {
     },
     {
       key: "unit",
-      label: "Unité (u, m, kg)",
+      label: "Unité / conditionnement",
       required: false,
-      synonyms: ["unite", "unite de vente", "uv", "conditionnement"],
+      hint: "Pièce, mètre, « couronne de 25 m », « boîte de 100 »…",
+      synonyms: ["unite", "unite de vente", "uv", "conditionnement", "cond", "unite de facturation"],
+    },
+    {
+      key: "pack_qty",
+      label: "Quantité par conditionnement",
+      required: false,
+      hint: "Ex. 25 pour une couronne de 25 m : le prix est ramené à l'unité",
+      synonyms: ["quantite par conditionnement", "qte par conditionnement", "qte conditionnement", "qte cond", "colisage", "nb par colis", "contenance", "quantite conditionnement", "qte uv"],
     },
     {
       key: "discount",
@@ -377,14 +398,48 @@ export function parseProductType(c: Cell): ProductType | null {
   return null;
 }
 
-function parseUnit(c: Cell): string | null {
-  const t = normalizeHeader(c);
-  if (t === "") return null;
-  if (/^(m|ml|metre|metres|m lineaire)$/.test(t)) return "m";
-  if (/^(kg|kilo|kilogramme)/.test(t)) return "kg";
-  if (/forfait/.test(t)) return "forfait";
-  return "u";
+export interface Packaging {
+  /** Unité de vente ramenée à l'unité : pièce, mètre, kilo, forfait. */
+  unit: "u" | "m" | "kg" | "forfait";
+  /** Quantité contenue dans le conditionnement facturé (couronne de 25 m → 25). */
+  packQty: number;
+  /** Libellé d'origine (« couronne de 25 m »), null si absent. */
+  label: string | null;
 }
+
+const LENGTH_WORDS = /\b(couronne|rouleau|touret|bobine|barre|longueur|tube|botte)\b/;
+const LENGTH_UNIT = /(^|\s|\d)(m|ml|mt|mtr|metres?|metres? lineaires?|m lineaires?)(\s|$)/;
+
+/**
+ * Unité et conditionnement : « pièce », « m », « le mètre », « couronne de 25 m »,
+ * « C25 m », « boîte de 100 », « lot de 10 », « seau 5 kg »… La colonne « quantité
+ * par conditionnement », si elle est remplie, l'emporte sur le nombre lu dans le libellé.
+ */
+export function parsePackaging(unitCell: Cell, qtyCell?: Cell): Packaging | "invalid" {
+  const label = cellText(unitCell) || null;
+  const t = normalizeHeader(unitCell).replace(/(\d)\s*(m|ml|kg)\b/g, "$1 $2");
+  const qtyRaw = qtyCell === undefined || cellText(qtyCell) === "" ? null : cellNumber(qtyCell);
+  if (qtyRaw !== null && !(qtyRaw > 0 && qtyRaw <= 100000)) return "invalid";
+  const inText = t.match(/(\d+(?:[.,]\d+)?)/);
+  const fromText = inText ? parseDecimal(inText[1]!) : null;
+  const qty = qtyRaw ?? (fromText !== null && fromText > 0 ? fromText : 1);
+  if (!(qty > 0 && qty <= 100000)) return "invalid";
+  if (/forfait/.test(t)) return { unit: "forfait", packQty: 1, label };
+  if (/\b(kg|kilos?|kilogrammes?)\b/.test(t)) return { unit: "kg", packQty: qty, label };
+  if (LENGTH_UNIT.test(t) || (LENGTH_WORDS.test(t) && /\bm\b|metre/.test(t)) || /^(le |au )?metre$/.test(t)) return { unit: "m", packQty: qty, label };
+  return { unit: "u", packQty: qty, label };
+}
+
+/** Prix du conditionnement → prix unitaire (au centime). */
+export const unitPriceCents = (packPriceCents: number, packQty: number) => Math.round(packPriceCents / packQty);
+
+/** Cellules de prix selon la case « prix publics / prix nets » du fichier. */
+function priceCells(cells: MappedRow, kind: PriceKind | undefined): { pub: Cell; net: Cell } {
+  // Une colonne « Prix net HT » dédiée garde son sens ; sinon la colonne « Prix HT » suit la case cochée.
+  if (cells.net_price !== undefined) return { pub: cells.public_price, net: cells.net_price };
+  return kind === "net" ? { pub: undefined, net: cells.public_price } : { pub: cells.public_price, net: undefined };
+}
+const filled = (c: Cell) => c !== undefined && cellText(c) !== "";
 
 export function normalizeReference(ref: string): string {
   return ref.replace(/\s+/g, "").toUpperCase();
@@ -394,10 +449,15 @@ export function normalizeReference(ref: string): string {
 // Lignes normalisées
 // ---------------------------------------------------------------------------
 
+/** Le prix du fichier est-il un prix PUBLIC (tarif à remiser) ou un prix NET (déjà remisé) ? */
+export type PriceKind = "public" | "net";
+
 export interface ImportDefaults {
   brand?: string;
   type?: ProductType;
   category?: string;
+  /** Case cochée pour le fichier (public par défaut). */
+  priceKind?: PriceKind;
 }
 
 export interface MaterialRow {
@@ -412,7 +472,9 @@ export interface MaterialRow {
   link_diameters: string | null;
   precharged_length_m: number | null;
   extra_charge_g_per_m: number | null;
-  public_price_cents: number;
+  designation: string | null;
+  /** null : fichier de prix nets sans prix public. */
+  public_price_cents: number | null;
   discount_rate: number | null; // null = non fourni par le fichier
   supplier_ref: string | null;
   ean: string | null;
@@ -424,9 +486,13 @@ export interface AccessoryRow {
   line: number;
   reference: string;
   name: string;
+  brand: string | null;
   category: string;
   diameter: string | null;
   unit: string;
+  /** Conditionnement d'origine (« couronne de 25 m » → 25) : les prix sont ramenés à l'unité. */
+  pack_qty: number;
+  pack_label: string | null;
   public_price_cents: number | null;
   discount_rate: number | null;
   supplier_ref: string | null;
@@ -461,7 +527,8 @@ export function validateMapping(mapping: Mapping, target: ImportTarget, defaults
   if (target === "accessoires" && !mapping.public_price && !mapping.net_price) problems.push("Choisissez la colonne « Prix public HT » ou « Prix net HT »");
   if (target === "materiel") {
     if (!mapping.brand && !defaults.brand?.trim()) problems.push("Choisissez la colonne « Marque » ou une marque pour tout le fichier");
-    if (!mapping.type && !defaults.type) problems.push("Choisissez la colonne « Type d'unité » ou un type pour tout le fichier");
+    // à défaut de colonne « Type », le type est lu dans la famille (« Unité murale », « Groupe extérieur »…)
+    if (!mapping.type && !mapping.discount_family && !defaults.type) problems.push("Choisissez la colonne « Type d'unité » ou un type pour tout le fichier");
   }
   const cols = Object.values(mapping).filter(Boolean);
   if (new Set(cols).size !== cols.length) problems.push("Une même colonne est utilisée pour deux informations");
@@ -474,19 +541,23 @@ export function normalizeMaterialRows(rows: { line: number; cells: MappedRow }[]
   for (const { line, cells } of rows) {
     const reference = cellText(cells.reference);
     const brand = cellText(cells.brand) || defaults.brand?.trim() || "";
-    const price = parsePriceCents(cells.public_price);
-    const type = cells.type !== undefined && cellText(cells.type) !== "" ? parseProductType(cells.type) : defaults.type ?? null;
+    const pc = priceCells(cells, defaults.priceKind);
+    const hasPublic = filled(pc.pub);
+    const hasNet = filled(pc.net);
+    const price = hasPublic ? parsePriceCents(pc.pub) : null;
+    const type = cells.type !== undefined && cellText(cells.type) !== "" ? parseProductType(cells.type) : (defaults.type ?? (filled(cells.discount_family) ? parseProductType(cells.discount_family) : null));
     const discount = parseDiscount(cells.discount);
     const outletsN = cellNumber(cells.max_outlets);
     const precharged = cellNumber(cells.precharged_length_m);
     const gPerM = cellNumber(cells.extra_charge_g_per_m);
     const dia = cellText(cells.link_diameters);
-    const net = cells.net_price !== undefined && cellText(cells.net_price) !== "" ? parsePriceCents(cells.net_price) : null;
+    const net = hasNet ? parsePriceCents(pc.net) : null;
     const msgs: string[] = [];
-    if (cells.net_price !== undefined && cellText(cells.net_price) !== "" && net === null) msgs.push(`prix net illisible (« ${cellText(cells.net_price)} »)`);
+    if (hasNet && (net === null || net === 0)) msgs.push(`prix net illisible (« ${cellText(pc.net)} »)`);
     if (!reference) msgs.push("référence manquante");
     if (!brand) msgs.push("marque manquante");
-    if (price === null || price === 0) msgs.push(`prix illisible (« ${cellText(cells.public_price)} »)`);
+    if (hasPublic && (price === null || price === 0)) msgs.push(`prix illisible (« ${cellText(pc.pub)} »)`);
+    if (!hasPublic && !hasNet) msgs.push("prix manquant");
     if (!type) msgs.push(`type d'unité non reconnu (« ${cellText(cells.type)} »)`);
     if (discount === "invalid") msgs.push(`remise illisible (« ${cellText(cells.discount)} »)`);
     if (outletsN !== null && !(Number.isInteger(outletsN) && outletsN >= 1 && outletsN <= 8)) msgs.push("nombre de sorties entre 1 et 8");
@@ -509,7 +580,8 @@ export function normalizeMaterialRows(rows: { line: number; cells: MappedRow }[]
       link_diameters: dia ? dia.replace(/\s*[-–]\s*/, " - ") : null,
       precharged_length_m: precharged,
       extra_charge_g_per_m: gPerM === null ? null : Math.round(gPerM),
-      public_price_cents: price!,
+      designation: cellText(cells.designation) || null,
+      public_price_cents: price,
       discount_rate: discount as number | null,
       ...offerCells(cells, net),
       discount_family: cellText(cells.discount_family) || cellText(cells.range_name) || null,
@@ -533,19 +605,22 @@ export function normalizeAccessoryRows(rows: { line: number; cells: MappedRow }[
   for (const { line, cells } of rows) {
     const reference = cellText(cells.reference);
     const name = cellText(cells.name);
-    const hasPublic = cells.public_price !== undefined && cellText(cells.public_price) !== "";
-    const hasNet = cells.net_price !== undefined && cellText(cells.net_price) !== "";
-    const price = hasPublic ? parsePriceCents(cells.public_price) : null;
-    const net = hasNet ? parsePriceCents(cells.net_price) : null;
+    const pc = priceCells(cells, defaults.priceKind);
+    const hasPublic = filled(pc.pub);
+    const hasNet = filled(pc.net);
+    const price = hasPublic ? parsePriceCents(pc.pub) : null;
+    const net = hasNet ? parsePriceCents(pc.net) : null;
     const discount = parseDiscount(cells.discount);
+    const pack = parsePackaging(cells.unit, cells.pack_qty);
     const msgs: string[] = [];
     if (!reference) msgs.push("référence manquante");
     if (!name) msgs.push("désignation manquante");
-    if (hasPublic && (price === null || price === 0)) msgs.push(`prix illisible (« ${cellText(cells.public_price)} »)`);
-    if (hasNet && net === null) msgs.push(`prix net illisible (« ${cellText(cells.net_price)} »)`);
+    if (hasPublic && (price === null || price === 0)) msgs.push(`prix illisible (« ${cellText(pc.pub)} »)`);
+    if (hasNet && (net === null || net === 0)) msgs.push(`prix net illisible (« ${cellText(pc.net)} »)`);
+    if (pack === "invalid") msgs.push(`conditionnement illisible (« ${[cellText(cells.unit), cellText(cells.pack_qty)].filter(Boolean).join(" / ")} »)`);
     if (!hasPublic && !hasNet) msgs.push("prix manquant");
     if (discount === "invalid") msgs.push(`remise illisible (« ${cellText(cells.discount)} »)`);
-    if (msgs.length) {
+    if (msgs.length || pack === "invalid") {
       errors.push({ line, message: msgs.join(", ") });
       continue;
     }
@@ -553,12 +628,15 @@ export function normalizeAccessoryRows(rows: { line: number; cells: MappedRow }[
       line,
       reference,
       name,
+      brand: cellText(cells.brand) || null,
       category: (cellText(cells.category) || defaults.category || "autre").toLowerCase(),
       diameter: cellText(cells.diameter) || null,
-      unit: parseUnit(cells.unit) ?? "u",
-      public_price_cents: price,
+      unit: pack.unit,
+      pack_qty: pack.packQty,
+      pack_label: pack.packQty !== 1 ? pack.label : null,
+      public_price_cents: price === null ? null : unitPriceCents(price, pack.packQty),
       discount_rate: discount as number | null,
-      ...offerCells(cells, net),
+      ...offerCells(cells, net === null ? null : unitPriceCents(net, pack.packQty)),
     });
   }
   return { rows: out, errors };
@@ -606,6 +684,9 @@ export interface OfferData {
   discount_family: string | null;
   /** Absente = ne pas toucher à la remise existante. */
   discount_rate?: number;
+  /** Conditionnement d'origine (les prix sont déjà ramenés à l'unité). */
+  pack_qty?: number;
+  pack_label?: string | null;
 }
 
 export interface OfferUpsert extends OfferData {
@@ -649,6 +730,8 @@ export interface ImportPlan {
 const keyOf = (brand: string | undefined, reference: string) => `${(brand ?? "").trim().toLowerCase()}|${normalizeReference(reference)}`;
 
 function offerOf(row: MaterialRow | AccessoryRow, designation: string | null): OfferData {
+  if ("designation" in row && row.designation) designation = row.designation;
+  if ("brand" in row && "pack_qty" in row && row.brand && designation && !designation.toLowerCase().includes(row.brand.toLowerCase())) designation = `${row.brand} – ${designation}`;
   const o: OfferData = {
     supplier_ref: row.supplier_ref,
     manufacturer_ref: row.reference,
@@ -659,6 +742,10 @@ function offerOf(row: MaterialRow | AccessoryRow, designation: string | null): O
     discount_family: row.discount_family,
   };
   if (row.discount_rate !== null) o.discount_rate = row.discount_rate;
+  if ("pack_qty" in row && row.pack_qty !== 1) {
+    o.pack_qty = row.pack_qty;
+    o.pack_label = row.pack_label;
+  }
   return o;
 }
 
@@ -699,7 +786,7 @@ export function buildPlan(target: ImportTarget, rows: (MaterialRow | AccessoryRo
   };
 
   for (const row of rows) {
-    const brand = "brand" in row ? row.brand : undefined;
+    const brand = target === "materiel" ? (row as MaterialRow).brand : undefined;
     const key = keyOf(brand, row.reference);
     const firstLine = seen.get(key);
     if (firstLine !== undefined) {
@@ -739,7 +826,12 @@ export function buildPlan(target: ImportTarget, rows: (MaterialRow | AccessoryRo
     }
 
     if (match.status === "none" || !match.candidateId) {
-      const { line: _l, brand: _b, supplier_ref: _s, ean: _e, discount_family: _f, net_price_cents: _n, public_price_cents: _p, discount_rate: _d, ...data } = row as MaterialRow;
+      if (target === "materiel" && row.public_price_cents === null) {
+        plan.errors.push({ line: row.line, message: `nouvelle référence ${row.reference} : prix public inconnu (fichier de prix nets), importez d'abord le tarif public ou créez-la à la main` });
+        continue;
+      }
+      const { line: _l, brand: _b, supplier_ref: _s, ean: _e, discount_family: _f, net_price_cents: _n, public_price_cents: _p, discount_rate: _d, designation: _g, ...rest } = row as MaterialRow;
+      const { pack_qty: _q, pack_label: _pl, ...data } = rest as typeof rest & { pack_qty?: number; pack_label?: string | null };
       plan.creates.push({
         ...(target === "materiel" ? { ...data, brand: brandName } : data),
         offer: offerOf(row, designation),
@@ -811,6 +903,20 @@ export function buildPlan(target: ImportTarget, rows: (MaterialRow | AccessoryRo
   plan.errors.sort((a, b) => a.line - b.line);
   plan.summary.errors = plan.errors.length;
   return plan;
+}
+
+// ---------------------------------------------------------------------------
+// Rapport d'erreurs téléchargeable (CSV Excel FR : « ; », BOM UTF-8)
+// ---------------------------------------------------------------------------
+
+export function errorReportCsv(filename: string, errors: RowError[], cellsByLine?: Map<number, MappedRow>): string {
+  const esc = (v: string) => (/[;"\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const lines = [["Fichier", "Ligne", "Référence", "Désignation", "Erreur"].join(";")];
+  for (const e of [...errors].sort((a, b) => a.line - b.line)) {
+    const c = cellsByLine?.get(e.line);
+    lines.push([filename, String(e.line), cellText(c?.reference), cellText(c?.name ?? c?.designation), e.message].map(esc).join(";"));
+  }
+  return "\ufeff" + lines.join("\r\n") + "\r\n";
 }
 
 // ---------------------------------------------------------------------------

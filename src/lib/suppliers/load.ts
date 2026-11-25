@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAll, type AccessoryItem, type ProductItem } from "@/lib/catalog/queries";
-import { familyKey, isTariffStale, rankOffers, referencePublicPrice, type DiscountBook, type NetPrice, type ShippingRule, type ShippingTier, type SupplierInfo, type SupplierOffer } from "./pricing";
+import { familyKey, isTariffStale, rankOffers, STALE_TARIFF_MONTHS, referencePublicPrice, type DiscountBook, type NetPrice, type ShippingRule, type ShippingTier, type SupplierInfo, type SupplierOffer } from "./pricing";
 
 /**
  * Lecture des données fournisseurs AVEC prix nets : `db` = client du membre
@@ -18,6 +18,10 @@ export interface SupplierRow extends SupplierInfo {
   stale: boolean;
   active: boolean;
   columnMapping: Record<string, Record<string, string>>;
+  /** distributeur (achat) ou fabricant (tarif public d'une marque, on n'y achète pas). */
+  kind: "distributeur" | "fabricant";
+  brandId: string | null;
+  tariffDate: string | null;
 }
 
 export interface OfferRow extends SupplierOffer {
@@ -31,6 +35,8 @@ export interface OfferRow extends SupplierOffer {
   matchStatus: "certain" | "probable" | "manuel";
   matchReason: string | null;
   updatedAt: string;
+  packQty: number;
+  packLabel: string | null;
 }
 
 export interface SupplierBook {
@@ -62,10 +68,10 @@ export function toShippingRule(s: { shipping_fee_cents: unknown; franco_cents: u
   };
 }
 
-export async function loadSuppliers(db: SupabaseClient, companyId: string, now = new Date()): Promise<SupplierRow[]> {
+export async function loadSuppliers(db: SupabaseClient, companyId: string, now = new Date(), months = STALE_TARIFF_MONTHS): Promise<SupplierRow[]> {
   const { data, error } = await db
     .from("suppliers")
-    .select("id, name, agency, contact_name, phone, email, delivery_terms, shipping_fee_cents, franco_cents, shipping_tiers, last_price_update_at, active, column_mapping")
+    .select("id, name, agency, contact_name, phone, email, delivery_terms, shipping_fee_cents, franco_cents, shipping_tiers, last_price_update_at, active, column_mapping, kind, brand_id, tariff_date")
     .eq("company_id", companyId)
     .order("name");
   if (error) throw new Error(error.message);
@@ -79,9 +85,12 @@ export async function loadSuppliers(db: SupabaseClient, companyId: string, now =
     email: s.email,
     deliveryTerms: s.delivery_terms,
     lastPriceUpdateAt: s.last_price_update_at,
-    stale: isTariffStale(s.last_price_update_at, now),
+    stale: isTariffStale(s.tariff_date ?? s.last_price_update_at, now, months),
     active: s.active,
     columnMapping: (s.column_mapping ?? {}) as Record<string, Record<string, string>>,
+    kind: (s.kind ?? "distributeur") as SupplierRow["kind"],
+    brandId: s.brand_id ?? null,
+    tariffDate: s.tariff_date ?? null,
   }));
 }
 
@@ -102,10 +111,15 @@ function toOffer(o: Record<string, unknown>): OfferRow {
     matchStatus: o.match_status as OfferRow["matchStatus"],
     matchReason: (o.match_reason as string | null) ?? null,
     updatedAt: o.updated_at as string,
+    // date du tarif : celle de l'import, à défaut la dernière mise à jour
+    tariffDate: (o.tariff_date as string | null) ?? String(o.updated_at ?? "").slice(0, 10) ?? null,
+    origin: (o.price_origin as "import" | "manuel" | null) ?? "import",
+    packQty: Number(o.pack_qty ?? 1),
+    packLabel: (o.pack_label as string | null) ?? null,
   };
 }
 
-const OFFER_COLUMNS = "id, supplier_id, product_id, accessory_id, public_price_cents, net_price_cents, discount_rate, discount_family, supplier_ref, manufacturer_ref, ean, designation, match_status, match_reason, updated_at";
+const OFFER_COLUMNS = "id, supplier_id, product_id, accessory_id, public_price_cents, net_price_cents, discount_rate, discount_family, supplier_ref, manufacturer_ref, ean, designation, match_status, match_reason, updated_at, tariff_date, price_origin, pack_qty, pack_label";
 
 export async function loadOffers(db: SupabaseClient, companyId: string, filter?: { productIds?: string[]; accessoryIds?: string[] }): Promise<OfferRow[]> {
   if (filter) {
@@ -165,6 +179,8 @@ export async function loadSupplierBook(db: SupabaseClient, companyId: string, fi
     }
   }
   const active = new Set(suppliers.filter((s) => s.active).map((s) => s.id));
+  // Tarif FABRICANT : source de prix publics, jamais un fournisseur chez qui acheter
+  const manufacturer = new Set(suppliers.filter((s) => s.kind === "fabricant").map((s) => s.id));
   const offersByProduct = new Map<string, OfferRow[]>();
   const offersByAccessory = new Map<string, OfferRow[]>();
   const probable: OfferRow[] = [];
@@ -174,12 +190,13 @@ export async function loadSupplierBook(db: SupabaseClient, companyId: string, fi
       continue;
     }
     if (!active.has(o.supplierId)) continue;
+    if (manufacturer.has(o.supplierId)) o.purchasable = false;
     const m = o.productId ? offersByProduct : offersByAccessory;
     const k = (o.productId ?? o.accessoryId)!;
     m.set(k, [...(m.get(k) ?? []), o]);
   }
   return {
-    suppliers,
+    suppliers: suppliers.filter((s) => s.kind !== "fabricant"),
     book,
     offersByProduct,
     offersByAccessory,
@@ -204,16 +221,19 @@ export function itemNetPrices(sb: SupplierBook, item: { productId?: string | nul
  */
 export async function refreshReferencePrices(db: SupabaseClient, companyId: string): Promise<void> {
   const sb = await loadSupplierBook(db, companyId);
-  const products: { id: string; public_price_cents: number }[] = [];
+  const products: { id: string; public_price_cents: number; public_price_source: string; public_price_date: string | null }[] = [];
   for (const [productId, offers] of sb.offersByProduct) {
     const brandId = sb.brandOf.get(productId) ?? null;
     const ref = referencePublicPrice(offers, brandId ? (sb.referenceSupplierOfBrand.get(brandId) ?? null) : null);
-    if (ref) products.push({ id: productId, public_price_cents: ref.cents });
+    // (un tarif commun publié passe avant : la base ignore alors cette valeur)
+    if (ref) products.push({ id: productId, public_price_cents: ref.cents, public_price_source: ref.origin === "manuel" ? "manuel" : "personnel", public_price_date: ref.date });
   }
   const accessories: {
     id: string;
     public_price_cents: number | null;
     floor_purchase_cents: number | null;
+    public_price_source: string | null;
+    public_price_date: string | null;
   }[] = [];
   for (const [accessoryId, offers] of sb.offersByAccessory) {
     const ref = referencePublicPrice(offers, null);
@@ -224,6 +244,8 @@ export async function refreshReferencePrices(db: SupabaseClient, companyId: stri
         id: accessoryId,
         public_price_cents: ref?.cents ?? null,
         floor_purchase_cents: floor,
+        public_price_source: ref ? (ref.origin === "manuel" ? "manuel" : "personnel") : null,
+        public_price_date: ref?.date ?? null,
       });
   }
   for (let i = 0; i < Math.max(products.length, accessories.length); i += 500) {

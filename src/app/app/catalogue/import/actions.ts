@@ -24,9 +24,17 @@ import { refreshReferencePrices } from "@/lib/suppliers/load";
 
 export interface ImportRequest {
   target: ImportTarget;
+  /** Tarif d'un distributeur (achat) ou d'un fabricant (prix publics d'une marque). */
+  origin: "distributeur" | "fabricant";
+  /** Fabricant : marque du tarif (la correspondance des colonnes est mémorisée par marque). */
+  brandName: string;
   /** Fournisseur existant, ou null + supplierName pour en créer un. */
   supplierId: string | null;
   supplierName: string;
+  /** Date d'effet du tarif (AAAA-MM-JJ). */
+  tariffDate: string;
+  /** Case « prix publics » / « prix nets » du fichier. */
+  priceKind: "public" | "net";
   filename: string;
   fileHash: string | null;
   source: "tableur" | "pdf";
@@ -46,11 +54,26 @@ export interface PreviewResult {
   newSamples?: string[];
   /** Même fichier déjà importé chez ce fournisseur. */
   alreadyImportedAt?: string | null;
+  /** Toutes les lignes en erreur (rapport téléchargeable). */
+  allErrors?: ImportPlan["errors"];
 }
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const fabricantName = (brand: string) => `Tarif fabricant ${brand.trim()}`;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function resolveSupplier(supabase: SupabaseClient, companyId: string, req: ImportRequest): Promise<{ id: string | null; name: string } | null> {
+  if (req.origin === "fabricant") {
+    const brand = req.brandName.trim();
+    if (!brand) return null;
+    const { data: b } = await supabase.from("brands").select("id").eq("company_id", companyId).ilike("name", brand).maybeSingle();
+    if (b) {
+      const { data } = await supabase.from("suppliers").select("id, name").eq("company_id", companyId).eq("kind", "fabricant").eq("brand_id", b.id).maybeSingle();
+      if (data) return { id: data.id, name: data.name };
+    }
+    return { id: null, name: fabricantName(brand) };
+  }
   if (req.supplierId) {
     if (!UUID.test(req.supplierId)) return null;
     const { data } = await supabase.from("suppliers").select("id, name").eq("company_id", companyId).eq("id", req.supplierId).maybeSingle();
@@ -75,12 +98,19 @@ type RawOffer = {
 
 async function plan(req: ImportRequest) {
   const { supabase, company } = await getCurrentCompany();
+  if (req.origin === "fabricant") {
+    req = { ...req, priceKind: "public", defaults: { ...req.defaults, brand: req.target === "materiel" ? req.brandName.trim() || req.defaults.brand : req.defaults.brand } };
+    if (req.target === "materiel") req.mapping = { ...req.mapping, brand: undefined };
+  }
+  req = { ...req, defaults: { ...req.defaults, priceKind: req.priceKind === "net" ? "net" : "public" } };
   const problems = validateMapping(req.mapping, req.target, req.defaults);
   const supplier = await resolveSupplier(supabase, company.id, req);
-  if (!supplier) problems.push("Indiquez le fournisseur");
+  if (!supplier) problems.push(req.origin === "fabricant" ? "Indiquez la marque du tarif fabricant" : "Indiquez le fournisseur");
+  if (!ISO_DATE.test(req.tariffDate) || Number.isNaN(new Date(req.tariffDate).getTime())) problems.push("Indiquez la date du tarif");
+  else if (req.tariffDate > new Date(Date.now() + 366 * 864e5).toISOString().slice(0, 10)) problems.push("Date du tarif trop lointaine");
   if (req.rows.length === 0) problems.push("Aucune ligne de données trouvée dans le fichier");
   if (req.rows.length > MAX_IMPORT_ROWS) problems.push(`Fichier trop gros : ${MAX_IMPORT_ROWS} lignes maximum`);
-  if (problems.length || !supplier) return { supabase, companyId: company.id, supplier, problems, plan: null };
+  if (problems.length || !supplier) return { supabase, companyId: company.id, supplier, problems, plan: null, req };
 
   const col = req.target === "materiel" ? "product_id" : "accessory_id";
   const offers = await fetchAll<RawOffer>(
@@ -139,6 +169,7 @@ async function plan(req: ImportRequest) {
     supplier,
     problems: [] as string[],
     plan: buildPlan(req.target, normalized.rows, existing, brandNames, normalized.errors),
+    req,
   };
 }
 
@@ -161,6 +192,7 @@ export async function previewImport(req: ImportRequest): Promise<PreviewResult> 
     newBrands: p.brandsToCreate.map((b) => b.name),
     newSamples: p.creates.slice(0, 10).map((c) => [c.brand, c.reference, c.name].filter(Boolean).join(" ")),
     alreadyImportedAt,
+    allErrors: p.errors,
   };
 }
 
@@ -176,6 +208,16 @@ export async function commitImport(req: ImportRequest): Promise<{ ok: boolean; m
     };
 
   let supplierId = r.supplier.id;
+  if (!supplierId && r.req.origin === "fabricant") {
+    // Tarif fabricant : une « source de prix » par marque (pas un fournisseur chez qui acheter)
+    const brand = r.req.brandName.trim();
+    let { data: b } = await r.supabase.from("brands").select("id").eq("company_id", r.companyId).ilike("name", brand).maybeSingle();
+    if (!b) ({ data: b } = await r.supabase.from("brands").insert({ company_id: r.companyId, name: brand, discount_rate: 0 }).select("id").single());
+    if (!b) return { ok: false, message: "Création de la marque impossible. Réessayez." };
+    const { data, error } = await r.supabase.from("suppliers").insert({ company_id: r.companyId, name: r.supplier.name, kind: "fabricant", brand_id: b.id }).select("id").single();
+    if (error) return { ok: false, message: "Création du tarif fabricant impossible. Réessayez." };
+    supplierId = data.id as string;
+  }
   if (!supplierId) {
     const { data, error } = await r.supabase.from("suppliers").insert({ company_id: r.companyId, name: r.supplier.name }).select("id").single();
     if (error)
@@ -196,6 +238,8 @@ export async function commitImport(req: ImportRequest): Promise<{ ok: boolean; m
     p_creates: p.creates,
     p_offers: p.offers,
     p_updates: p.updates,
+    p_tariff_date: r.req.tariffDate,
+    p_price_kind: r.req.defaults.priceKind ?? "public",
   });
   if (error)
     return {
@@ -213,6 +257,38 @@ export async function commitImport(req: ImportRequest): Promise<{ ok: boolean; m
   revalidatePath("/app/catalogue");
   revalidatePath("/app/fournisseurs");
   const parts = [`${p.summary.newItems} article(s) ajouté(s)`, `${p.offers.length - p.summary.probable} tarif(s) mis à jour`];
+  if (p.summary.errors) parts.push(`${p.summary.errors} ligne(s) en erreur ignorée(s)`);
   if (p.summary.probable) parts.push(`${p.summary.probable} correspondance(s) probable(s) à confirmer dans Fournisseurs`);
   return { ok: true, message: `Import terminé : ${parts.join(", ")}.` };
+}
+
+/** Dernier import encore annulable (affiché sur la page d'import). */
+export interface LastImport {
+  filename: string | null;
+  createdAt: string;
+  supplier: string | null;
+  tariffDate: string | null;
+  priceKind: "public" | "net";
+  created: number;
+  updated: number;
+}
+
+/** « Annuler le dernier import » : prix, tarifs et articles créés reviennent à l'état d'avant. */
+export async function undoLastImport(): Promise<{ ok: boolean; message: string }> {
+  { const g = await adminOnlyError(); if (g) return g as never; }
+  const { supabase, company } = await getCurrentCompany();
+  const { data, error } = await supabase.rpc("undo_last_catalog_import");
+  if (error) return { ok: false, message: /Aucun import/.test(error.message) ? "Aucun import à annuler." : /avant cette fonctionnalité/.test(error.message) ? "Ce dernier import date d'avant cette fonctionnalité : il ne peut pas être annulé automatiquement." : "Annulation impossible, rien n'a été modifié. Réessayez." };
+  try {
+    await refreshReferencePrices(supabase, company.id);
+  } catch {
+    // les prix de référence seront recalculés au prochain import ou à la prochaine modification
+  }
+  revalidatePath("/app/catalogue");
+  revalidatePath("/app/catalogue/import");
+  revalidatePath("/app/fournisseurs");
+  const d = data as { filename: string | null; restored: number; deleted: number; disabled: number };
+  const parts = [`${d.restored} tarif(s) remis à l'état précédent`, `${d.deleted} élément(s) créé(s) supprimé(s)`];
+  if (d.disabled) parts.push(`${d.disabled} article(s) déjà utilisé(s) dans un devis désactivé(s) au lieu d'être supprimé(s)`);
+  return { ok: true, message: `Import « ${d.filename ?? "sans nom"} » annulé : ${parts.join(", ")}. Les devis déjà émis gardent leurs prix.` };
 }

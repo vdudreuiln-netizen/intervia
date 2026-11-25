@@ -3,13 +3,15 @@
 import Link from "next/link";
 import { createContext, useContext, useMemo, useState, useTransition } from "react";
 
-const CatalogContext = createContext({ isAdmin: true, showMargin: true });
+const CatalogContext = createContext({ isAdmin: true, showMargin: true, alertMonths: STALE_TARIFF_MONTHS });
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, LinkButton, Notice, PercentField } from "@/components/ui";
 import { formatEuros, formatPercent } from "@/lib/format";
 import { PRODUCT_TYPE_LABELS, type ProductType } from "@/lib/catalog/import";
 import { ACCESSORY_CATEGORIES, ACCESSORY_UNITS, brandToForm, type BrandForm } from "@/lib/catalog/forms";
 import type { AccessoryItem, BrandItem, ProductItem } from "@/lib/catalog/queries";
+import { priceSourceText, type PriceSource } from "@/lib/catalog/reference";
+import { isTariffStale, STALE_TARIFF_MONTHS } from "@/lib/suppliers/pricing";
 import { deleteBrand, deleteExamples, saveBrand } from "./actions";
 
 type Tab = "materiel" | "accessoires" | "marques";
@@ -26,6 +28,7 @@ export function CatalogView({
   purchaseCoefficient,
   isAdmin = true,
   showMargin = true,
+  alertMonths,
 }: {
   tab: Tab;
   brands: BrandItem[];
@@ -34,6 +37,8 @@ export function CatalogView({
   accessoryCoefficient: number;
   purchaseCoefficient: number;
   isAdmin?: boolean;
+  /** Seuil « tarif ancien » du compte (12 mois par défaut). */
+  alertMonths?: number;
   showMargin?: boolean;
 }) {
   const hasExamples = brands.some((b) => b.is_example) || accessories.some((a) => a.is_example);
@@ -60,7 +65,7 @@ export function CatalogView({
       </nav>
       {hasExamples && isAdmin && <ExamplesNotice />}
       {!isAdmin && <Notice>Catalogue en consultation : seuls les administrateurs le modifient.</Notice>}
-      <CatalogContext.Provider value={{ isAdmin, showMargin }}>
+      <CatalogContext.Provider value={{ isAdmin, showMargin, alertMonths: alertMonths ?? STALE_TARIFF_MONTHS }}>
         {tab === "materiel" && <ProductList products={products} />}
         {tab === "accessoires" && <AccessoryList accessories={accessories} coefficient={accessoryCoefficient} purchaseCoefficient={purchaseCoefficient} />}
         {tab === "marques" && isAdmin && <BrandList brands={brands} />}
@@ -103,16 +108,29 @@ function Actions({ addHref, addLabel, target }: { addHref: string; addLabel: str
   );
 }
 
-function PriceRow({ purchase, sale, discount, discountNote }: { purchase: number; sale: number; discount: number; discountNote?: string }) {
-  if (!useContext(CatalogContext).showMargin) {
+function PriceRow({ purchase, sale, discount, discountNote, source, date }: { purchase: number; sale: number; discount: number; discountNote?: string; source?: PriceSource | null; date?: string | null }) {
+  const { showMargin, alertMonths: months } = useContext(CatalogContext);
+  const stale = date ? isTariffStale(date, new Date(), months) : false;
+  const origin = (
+    <p className={`mt-1 text-sm ${stale ? "font-bold text-amber-800" : "text-slate-600"}`}>
+      Prix public : {priceSourceText(source, date)}
+      {stale ? ` · plus de ${months} mois` : ""}
+    </p>
+  );
+  if (!showMargin) {
     return (
-      <p className="mt-2 text-sm">
-        <span className="text-slate-600">Prix de vente HT </span>
-        <span className="text-base font-bold">{formatEuros(sale)}</span>
-      </p>
+      <>
+        <p className="mt-2 text-sm">
+          <span className="text-slate-600">Prix de vente HT </span>
+          <span className="text-base font-bold">{formatEuros(sale)}</span>
+        </p>
+        {origin}
+      </>
     );
   }
   return (
+    <>
+    {origin}
     <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
       <div>
         <span className="block text-slate-600">Achat</span>
@@ -127,6 +145,7 @@ function PriceRow({ purchase, sale, discount, discountNote }: { purchase: number
         <span className="text-base font-bold">{formatPercent(discount)}</span>
       </div>
     </div>
+    </>
   );
 }
 
@@ -181,7 +200,7 @@ function ProductList({ products }: { products: (ProductItem & WithSupplier)[] })
                 </div>
                 {p.is_example && <span className="rounded-md bg-amber-200 px-2 py-1 text-xs font-bold text-amber-900">EXEMPLE</span>}
               </div>
-              <PriceRow purchase={p.prices.purchaseCents} sale={p.prices.saleCents} discount={p.prices.discount} discountNote={supplierNote(p) ?? (p.discount_rate === null ? "(marque)" : "(produit)")} />
+              <PriceRow purchase={p.prices.purchaseCents} sale={p.prices.saleCents} discount={p.prices.discount} discountNote={supplierNote(p) ?? (p.discount_rate === null ? "(marque)" : "(produit)")} source={p.price_source} date={p.price_date} />
             </CardLink>
           </li>
         ))}
@@ -233,7 +252,7 @@ function AccessoryList({ accessories, coefficient, purchaseCoefficient }: { acce
                       </p>
                       {a.is_example && <span className="rounded-md bg-amber-200 px-2 py-1 text-xs font-bold text-amber-900">EXEMPLE</span>}
                     </div>
-                    <PriceRow purchase={a.prices.purchaseCents} sale={a.prices.saleCents} discount={a.prices.discount} discountNote={supplierNote(a)} />
+                    <PriceRow purchase={a.prices.purchaseCents} sale={a.prices.saleCents} discount={a.prices.discount} discountNote={supplierNote(a)} source={a.price_source} date={a.price_date} />
                   </CardLink>
                 </li>
               ))}

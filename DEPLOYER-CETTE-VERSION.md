@@ -26,14 +26,16 @@ select
   to_regclass('public.quote_plans')      is not null as migration_11,
   to_regclass('public.site_jobs')        is not null as migration_12,
   to_regclass('public.quote_amendments') is not null as migration_13,
-  to_regclass('public.ref_brands')       is not null as migration_14;
+  to_regclass('public.ref_brands')       is not null as migration_14,
+  to_regclass('public.catalog_import_changes') is not null as migration_15;
 ```
 
-4. Notez le résultat (« true » = déjà fait, « false » = à faire). Exemple : `true | true | false | false | false`
-   → il faudra exécuter la 12, puis la 13, puis la 14.
+4. Notez le résultat (« true » = déjà fait, « false » = à faire). Exemple : `true | true | false | false | false | false`
+   → il faudra exécuter la 12, puis la 13, la 14 et la 15.
 
-> **Les migrations 13 et 14 sont à exécuter avec cette version** (13 : avenants, CERFA, pays du compte ;
-> 14 : catalogue commun et remises) : si la 12 est à faire, la 13 et la 14 le sont aussi, juste après.
+> **Les migrations 13, 14 et 15 sont obligatoires avec cette version** (13 : avenants, CERFA, pays du compte ;
+> 14 : catalogue commun et remises ; 15 : import de tarif personnel, source des prix, annulation d'import).
+> Le code les utilise : sans elles, le catalogue et l'import affichent une erreur.
 
 ---
 
@@ -89,7 +91,7 @@ En cas de message d'erreur :
 
 ## Étape 3 — Exécuter les migrations (5 min)
 
-Pour **chaque** migration marquée « false » à l'étape 1, **dans l'ordre 10 → 11 → 12 → 13 → 14** :
+Pour **chaque** migration marquée « false » à l'étape 1, **dans l'ordre 10 → 11 → 12 → 13 → 14 → 15** :
 
 1. Ouvrez le lien du fichier sur GitHub :
    - 10 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261115000010_multi_suppliers.sql
@@ -97,11 +99,12 @@ Pour **chaque** migration marquée « false » à l'étape 1, **dans l'ordre 10 
    - 12 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261117000012_placement_and_site.sql
    - 13 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261125000013_validation_fixes.sql
    - 14 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261126000014_reference_catalog.sql
+   - 15 : https://github.com/vdudreuiln-netizen/intervia/blob/claude/climdevis-mvp-saas-kwvmye/supabase/migrations/20261127000015_personal_tariffs.sql
 2. Cliquez sur l'icône **Copy raw file** (deux carrés superposés, en haut à droite du fichier).
 3. Supabase › **SQL Editor** › **+ New query** › collez › **Run**.
 4. Résultat attendu : « Success. No rows returned ».
    **En cas d'erreur : n'exécutez rien d'autre**, notez le message exact et gardez la sauvegarde.
-5. Une fois toutes faites, relancez la requête de l'étape 1 : les 5 colonnes doivent afficher **true**.
+5. Une fois toutes faites, relancez la requête de l'étape 1 : les 6 colonnes doivent afficher **true**.
 
 ---
 
@@ -156,6 +159,12 @@ Cochez au fur et à mesure. Utilisez un client fictif à votre nom.
 **Avenant**
 - [ ] Onglet **Écarts** : **Signaler un écart** (ex. 2 m de liaison en plus), renseignez **Prix HT** et **Coût** (prix ≥ coût) › **Chiffrer**.
 - [ ] Cochez-le › **Préparer l'avenant (1)** › ouvrez le PDF de l'avenant › **Accepté par le client**.
+
+**Import de tarif personnel**
+- [ ] **Catalogue › Importer un tarif** : « Mon distributeur », cochez **Prix publics**, date du tarif, fichier CSV ou Excel.
+      Le résumé affiche nouvelles / mises à jour / en erreur ; s'il y a des erreurs, **Télécharger le rapport d'erreurs**.
+- [ ] **Valider l'import**, puis dans le catalogue : sous chaque prix, « Prix public : Tarif importé du JJ/MM/AAAA ».
+- [ ] Revenez sur **Importer un tarif** : **↶ Annuler le dernier import** remet les prix d'avant.
 
 **Tableau de bord**
 - [ ] **Accueil** : le chiffre d'affaires signé du mois affiche **Montant initial + Avenants (1) = Total**.

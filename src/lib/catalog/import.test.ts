@@ -58,7 +58,7 @@ describe("détection de l'en-tête", () => {
 describe("correspondance des colonnes", () => {
   it("reconnaît les intitulés usuels des tarifs", () => {
     const m = guessMapping(["Fabricant", "Code article", "Famille", "Puissance frigorifique", "PPI", "Remise %"], "materiel");
-    expect(m).toEqual({ brand: "Fabricant", reference: "Code article", type: "Famille", cooling_kw: "Puissance frigorifique", public_price: "PPI", discount: "Remise %" });
+    expect(m).toEqual({ brand: "Fabricant", reference: "Code article", discount_family: "Famille", cooling_kw: "Puissance frigorifique", public_price: "PPI", discount: "Remise %" });
   });
   it("réutilise la correspondance mémorisée du fournisseur", () => {
     const m = guessMapping(["Col A", "Col B", "Tarif"], "materiel", { reference: "Col B", brand: "Supprimée" });
@@ -201,6 +201,7 @@ describe("plan d'import (multi-fournisseurs)", () => {
     ean: null,
     discount_family: null,
     net_price_cents: null,
+    designation: null,
     ...extra,
   });
 

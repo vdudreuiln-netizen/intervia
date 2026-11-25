@@ -112,20 +112,28 @@ describe("remises et prix nets", () => {
 describe("prix public de référence (option A)", () => {
   const offers = [offer({ supplierId: "s1", publicPriceCents: 120000 }), offer({ supplierId: "s2", publicPriceCents: 125000 }), offer({ supplierId: "s3", netPriceCents: 50000 })];
   it("fournisseur de référence de la marque", () => {
-    expect(referencePublicPrice(offers, "s1")).toEqual({
+    expect(referencePublicPrice(offers, "s1")).toMatchObject({
       cents: 120000,
       supplierId: "s1",
     });
   });
   it("à défaut, le plus élevé", () => {
-    expect(referencePublicPrice(offers, null)).toEqual({
+    expect(referencePublicPrice(offers, null)).toMatchObject({
       cents: 125000,
       supplierId: "s2",
     });
-    expect(referencePublicPrice(offers, "s3")).toEqual({
+    expect(referencePublicPrice(offers, "s3")).toMatchObject({
       cents: 125000,
       supplierId: "s2",
     });
+  });
+  it("doublon de prix public : le tarif le plus récent l'emporte, même sur le fournisseur de référence", () => {
+    const dated: SupplierOffer[] = [
+      offer({ supplierId: "s1", publicPriceCents: 120000, tariffDate: "2026-01-15" }),
+      offer({ supplierId: "s2", publicPriceCents: 118000, tariffDate: "2026-09-01", origin: "import" }),
+      offer({ supplierId: "s3", publicPriceCents: 130000, tariffDate: null }),
+    ];
+    expect(referencePublicPrice(dated, "s1")).toEqual({ cents: 118000, supplierId: "s2", date: "2026-09-01", origin: "import" });
   });
   it("aucun prix public connu", () => {
     expect(referencePublicPrice([offer({ supplierId: "s3", netPriceCents: 1 })], null)).toBeNull();

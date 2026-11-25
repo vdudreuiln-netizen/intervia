@@ -58,6 +58,7 @@ export default async function CataloguePage({ searchParams }: { searchParams: Pr
       purchaseCoefficient={restricted ? 0 : company.accessory_purchase_coefficient}
       isAdmin={role === "admin"}
       showMargin={canSeeMargins}
+      alertMonths={company.tariff_alert_months}
     />
   );
 }

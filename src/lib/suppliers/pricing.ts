@@ -30,6 +30,12 @@ export interface SupplierOffer {
   discount: number | null;
   /** Famille de remise (ou gamme à défaut) indiquée par le tarif. */
   family: string | null;
+  /** Date du tarif (AAAA-MM-JJ) : en cas de doublon de prix public, le plus récent l'emporte. */
+  tariffDate?: string | null;
+  /** Tarif importé ou prix saisi à la main (affichage de la source). */
+  origin?: "import" | "manuel";
+  /** false : tarif d'un FABRICANT (prix publics) — on n'achète pas chez lui. */
+  purchasable?: boolean;
 }
 
 /** Remises par fournisseur : par marque et par famille (clé normalisée par familyKey). */
@@ -97,18 +103,27 @@ export function netPurchase(offer: SupplierOffer, brandId: string | null, book: 
 /** Prix nets de tous les fournisseurs d'un article, du moins cher au plus cher. */
 export function rankOffers(offers: SupplierOffer[], brandId: string | null, book: DiscountBook): NetPrice[] {
   return offers
+    .filter((o) => o.purchasable !== false)
     .map((o) => netPurchase(o, brandId, book))
     .filter((n): n is NetPrice => n !== null)
     .sort((a, b) => a.netCents - b.netCents || a.supplierId.localeCompare(b.supplierId));
 }
 
-/** Prix public de référence : fournisseur de référence de la marque, sinon le plus élevé. */
-export function referencePublicPrice(offers: SupplierOffer[], referenceSupplierId: string | null): { cents: number; supplierId: string } | null {
+/**
+ * Prix public de référence parmi les tarifs PERSONNELS (le tarif commun publié
+ * passe avant, voir resolvePublicPrice) : le tarif le plus RÉCENT ; à date égale,
+ * le fournisseur de référence de la marque, sinon le prix le plus élevé.
+ */
+export function referencePublicPrice(offers: SupplierOffer[], referenceSupplierId: string | null): { cents: number; supplierId: string; date: string | null; origin: "import" | "manuel" } | null {
   const priced = offers.filter((o) => o.publicPriceCents !== null && o.publicPriceCents !== undefined) as (SupplierOffer & { publicPriceCents: number })[];
   if (priced.length === 0) return null;
-  const ref = referenceSupplierId ? priced.find((o) => o.supplierId === referenceSupplierId) : undefined;
-  const pick = ref ?? priced.reduce((a, b) => (b.publicPriceCents > a.publicPriceCents ? b : a));
-  return { cents: pick.publicPriceCents, supplierId: pick.supplierId };
+  const pick = [...priced].sort(
+    (a, b) =>
+      (b.tariffDate ?? "").localeCompare(a.tariffDate ?? "") ||
+      Number(b.supplierId === referenceSupplierId) - Number(a.supplierId === referenceSupplierId) ||
+      b.publicPriceCents - a.publicPriceCents,
+  )[0]!;
+  return { cents: pick.publicPriceCents, supplierId: pick.supplierId, date: pick.tariffDate ?? null, origin: pick.origin ?? "import" };
 }
 
 // ---------------------------------------------------------------------------

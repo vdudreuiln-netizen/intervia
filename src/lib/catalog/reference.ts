@@ -201,3 +201,43 @@ export function newerTariffsAvailable(used: { brandName: string; tariffDate: str
     return !u.tariffDate || p.effectiveDate > u.tariffDate ? [p] : [];
   });
 }
+
+// ---------------------------------------------------------------------------
+// Priorité des prix publics et affichage de la source
+// ---------------------------------------------------------------------------
+
+export type PriceSource = "commun" | "personnel" | "manuel";
+
+export const PRICE_SOURCE_LABELS: Record<PriceSource, string> = {
+  commun: "Tarif commun",
+  personnel: "Tarif importé",
+  manuel: "Saisi à la main",
+};
+
+export interface ResolvedPublicPrice {
+  cents: number;
+  source: PriceSource;
+  date: string | null;
+  /** Fournisseur dont vient le prix (tarif personnel ou saisie), null pour le tarif commun. */
+  supplierId: string | null;
+}
+
+/**
+ * Règle de priorité du prix PUBLIC (le prix net importé, lui, s'utilise tel quel) :
+ *  1. tarif commun publié (catalogue ClimDevis, accord de la marque) ;
+ *  2. sinon tarif personnel importé ou prix saisi : le plus récent l'emporte.
+ * La remise distributeur × marque s'applique ensuite (netOffers).
+ */
+export function resolvePublicPrice(common: { cents: number; date: string } | null, personal: { cents: number; supplierId: string; date: string | null; origin: "import" | "manuel" } | null): ResolvedPublicPrice | null {
+  if (common) return { cents: common.cents, source: "commun", date: common.date, supplierId: null };
+  if (personal) return { cents: personal.cents, source: personal.origin === "manuel" ? "manuel" : "personnel", date: personal.date, supplierId: personal.supplierId };
+  return null;
+}
+
+/** « Tarif importé du 01/03/2026 », « Saisi à la main le 12/11/2026 », « Tarif commun du 01/01/2027 ». */
+export function priceSourceText(source: PriceSource | null | undefined, date: string | null | undefined): string {
+  if (!source) return "Source inconnue";
+  const d = date && /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10).split("-").reverse().join("/") : null;
+  if (!d) return PRICE_SOURCE_LABELS[source];
+  return source === "manuel" ? `${PRICE_SOURCE_LABELS[source]} le ${d}` : `${PRICE_SOURCE_LABELS[source]} du ${d}`;
+}

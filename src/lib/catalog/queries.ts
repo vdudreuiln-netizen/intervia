@@ -1,4 +1,5 @@
 import "server-only";
+import type { PriceSource } from "./reference";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { catalogPrices, type CatalogPrices } from "@/lib/pricing/engine";
 import type { ProductType } from "./import";
@@ -27,6 +28,9 @@ export interface ProductItem {
   discount_rate: number | null;
   is_example: boolean;
   prices: CatalogPrices;
+  /** Source et date du prix public retenu (commun / importé / saisi à la main). */
+  price_source: PriceSource | null;
+  price_date: string | null;
 }
 
 export interface AccessoryItem {
@@ -42,6 +46,8 @@ export interface AccessoryItem {
   discount_rate: number;
   is_example: boolean;
   prices: CatalogPrices;
+  price_source: PriceSource | null;
+  price_date: string | null;
 }
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -77,7 +83,7 @@ export async function loadProducts(supabase: SupabaseClient, companyId: string):
   const rows = await fetchAll<RawProduct>((from, to) =>
     supabase
       .from("products")
-      .select("id, brand_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, public_price_cents, discount_rate, is_example, brands(name, discount_rate, sale_coefficient)")
+      .select("id, brand_id, range_name, reference, type, cooling_kw, heating_kw, max_outlets, max_indoor_ratio, public_price_cents, discount_rate, is_example, public_price_source, public_price_date, brands(name, discount_rate, sale_coefficient)")
       .eq("company_id", companyId)
       .eq("active", true)
       .order("type")
@@ -99,6 +105,8 @@ export async function loadProducts(supabase: SupabaseClient, companyId: string):
       public_price_cents: Number(p.public_price_cents),
       discount_rate: num(p.discount_rate),
       is_example: p.is_example as boolean,
+      price_source: ((p as Record<string, unknown>).public_price_source as PriceSource | null) ?? null,
+      price_date: ((p as Record<string, unknown>).public_price_date as string | null) ?? null,
     };
     return {
       ...item,
@@ -118,7 +126,7 @@ export async function loadAccessories(supabase: SupabaseClient, companyId: strin
     (from, to) =>
       supabase
         .from("accessories")
-        .select("id, reference, category, name, diameter, unit, public_price_cents, purchase_price_cents, floor_purchase_cents, discount_rate, is_example")
+        .select("id, reference, category, name, diameter, unit, public_price_cents, purchase_price_cents, floor_purchase_cents, discount_rate, is_example, public_price_source, public_price_date")
         .eq("company_id", companyId)
         .eq("active", true)
         .order("category")
@@ -145,6 +153,8 @@ export async function loadAccessories(supabase: SupabaseClient, companyId: strin
       floor_purchase_cents,
       discount_rate,
       is_example: a.is_example as boolean,
+      price_source: (a.public_price_source as PriceSource | null) ?? null,
+      price_date: (a.public_price_date as string | null) ?? null,
       prices: catalogPrices({
         kind: "accessory",
         publicPriceCents: public_price_cents,
